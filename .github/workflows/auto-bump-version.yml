@@ -1,0 +1,74 @@
+name: Auto bump version on merge to main
+
+on:
+  push:
+    branches: [ "main" ]
+    paths-ignore:
+      - 'release.version'
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Bump release.version (patch with rollover)
+        id: bump
+        shell: bash
+        run: |
+          set -euo pipefail
+          file="release.version"
+
+          if [[ ! -f "$file" ]]; then
+            echo "Error: '$file' not found." >&2
+            exit 1
+          fi
+
+          current="$(tr -d ' \n' < "$file")"
+          if [[ -z "$current" ]]; then
+            echo "Error: '$file' is empty." >&2
+            exit 1
+          fi
+
+          base="${current%%-*}"
+          suffix="${current#"$base"}"
+
+          if ! [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Version '$base' must be in format major.minor.patch" >&2
+            exit 1
+          fi
+
+          IFS='.' read -r major minor patch <<< "$base"
+
+          patch=$((patch + 1))
+          if (( patch >= 100 )); then
+            patch=0
+            minor=$((minor + 1))
+          fi
+
+          if (( minor >= 100 )); then
+            minor=0
+            major=$((major + 1))
+          fi
+
+          new=$(printf "%d.%02d.%02d%s" "$major" "$minor" "$patch" "$suffix")
+          echo "$new" > "$file"
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push release.version
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.new }}
+        run: |
+          set -euo pipefail
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git add release.version
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: bump release.version to ${NEW_VERSION}"
+            git push
+          fi
