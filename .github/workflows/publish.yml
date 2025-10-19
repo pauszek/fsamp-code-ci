@@ -26,7 +26,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ -f release.version ]] || { echo "release.version not found"; exit 1; }
+          [[ -s release.version ]] || { echo "release.version not found or empty"; exit 1; }
           echo "value=$(tr -d ' \r\n' < release.version)" >> "$GITHUB_OUTPUT"
 
       - name: Build and publish
