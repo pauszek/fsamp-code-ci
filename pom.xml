@@ -9,6 +9,9 @@
     <version>${revision}</version>
 
     <profiles>
+        <!-- Provides a default 'revision' only when -Drevision is NOT set.
+             Passing -Drevision (even as -Drevision=) defines the property and prevents activation.
+             Supply a non-empty -Drevision value or omit the property entirely. -->
         <profile>
             <id>local-default-version</id>
             <activation>

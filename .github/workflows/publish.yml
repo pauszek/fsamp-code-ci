@@ -30,7 +30,15 @@ jobs:
           echo "value=$(tr -d ' \r\n' < release.version)" >> "$GITHUB_OUTPUT"
 
       - name: Build and publish
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REVISION: ${{ steps.ver.outputs.value }}
-        run: mvn -B clean deploy -DskipTests -Drevision="$REVISION" -s "$GITHUB_WORKSPACE/settings.xml"
+        run: |
+          set -euo pipefail
+          if [[ -n "${REVISION:-}" ]]; then
+            mvn -B clean deploy -DskipTests -Drevision="$REVISION" -s "$GITHUB_WORKSPACE/settings.xml"
+          else
+            echo "No revision provided; relying on fallback profile."
+            mvn -B clean deploy -DskipTests -s "$GITHUB_WORKSPACE/settings.xml"
+          fi
