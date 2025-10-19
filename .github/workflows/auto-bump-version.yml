@@ -1,27 +1,29 @@
-name: Auto bump version after Build
+name: Auto bump version via PR after Build
 on:
   workflow_run:
     workflows: [ "Build" ]
+    branches: [ main ]
     types: [ completed ]
 
 concurrency:
-  group: auto-bump-${{ github.event.workflow_run.head_branch }}
+  group: auto-bump-pr-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
-  bump:
+  pr-bump:
     if: >
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main'
+      github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
     steps:
-      - name: Checkout head of triggering run
+      - name: Checkout triggering commit
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          ref: ${{ github.event.workflow_run.head_branch }}
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Bump release.version (patch with rollover)
         id: bump
@@ -43,18 +45,22 @@ jobs:
           echo "$new" > "$file"
           echo "new=$new" >> "$GITHUB_OUTPUT"
 
-      - name: Commit and push release.version
-        env:
-          NEW_VERSION: ${{ steps.bump.outputs.new }}
-          BRANCH: ${{ github.event.workflow_run.head_branch }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor }}@users.noreply.github.com"
-          git add release.version
-          if ! git diff --cached --quiet; then
-            git commit -m "[skip ci] chore: bump release.version to ${NEW_VERSION}"
-            git pull --rebase origin "${BRANCH}"
-            git push origin HEAD:${BRANCH}
-          fi
+      - name: Create PR
+        id: cpr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "[skip ci] chore: bump release.version to ${{ steps.bump.outputs.new }}"
+          title: "[skip ci] chore: bump release.version to ${{ steps.bump.outputs.new }}"
+          body: "Automated bump from Build run ${{ github.event.workflow_run.id }}."
+          branch: chore/autobump-${{ steps.bump.outputs.new }}
+          base: main
+          labels: autobump
+          delete-branch: true
+
+      - name: Enable auto-merge (squash)
+        if: steps.cpr.outputs.pull-request-number != ''
+        uses: peter-evans/enable-pull-request-automerge@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          pull-request-number: ${{ steps.cpr.outputs.pull-request-number }}
+          merge-method: squash
