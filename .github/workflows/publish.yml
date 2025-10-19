@@ -2,7 +2,7 @@ name: Publish Shared Library on Release
 
 on:
   release:
-    types: [published]
+    types: [ published ]
 
 jobs:
   publish:
@@ -20,7 +20,25 @@ jobs:
           cache: maven
           server-id: github
           settings-path: ${{ github.workspace }}
+
+      - name: Read version from release.version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -s release.version ]] || { echo "release.version not found or empty"; exit 1; }
+          echo "value=$(tr -d ' \r\n' < release.version)" >> "$GITHUB_OUTPUT"
+
       - name: Build and publish
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: mvn -B clean deploy -DskipTests -s $GITHUB_WORKSPACE/settings.xml
+          REVISION: ${{ steps.ver.outputs.value }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${REVISION:-}" ]]; then
+            mvn -B clean deploy -DskipTests -Drevision="$REVISION" -s "$GITHUB_WORKSPACE/settings.xml"
+          else
+            echo "No revision provided; relying on fallback profile."
+            mvn -B clean deploy -DskipTests -s "$GITHUB_WORKSPACE/settings.xml"
+          fi
