@@ -30,7 +30,6 @@ jobs:
           pr-mode: true
           use-caches: true
           use-annotations: true
-          # Comment only for PRs from the same repository (forks get annotations/checks)
           post-pr-comment: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
           upload-result: false
           push-fixes: 'none'
