@@ -1,0 +1,24 @@
+name: Build
+on:
+  push:
+    branches: ["**"]
+    paths-ignore:
+      - 'release.version'
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Build with explicit revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -s 'release.version' ]] || { echo "Error: 'release.version' missing or empty."; exit 1; }
+          REV="$(tr -d ' \n' < 'release.version')"
+          mvn -B -ntp -Drevision="$REV" verify

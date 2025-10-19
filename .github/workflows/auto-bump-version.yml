@@ -1,21 +1,23 @@
-name: Auto bump version on merge to main
-
+name: Auto bump version after Build
 on:
-  push:
-    branches: [ "main" ]
-    paths-ignore:
-      - 'release.version'
+  workflow_run:
+    workflows: [ "Build" ]
+    types: [ completed ]
 
 jobs:
   bump:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Checkout
+      - name: Checkout head of triggering run
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Bump release.version (patch with rollover)
         id: bump
@@ -23,39 +25,16 @@ jobs:
         run: |
           set -euo pipefail
           file="release.version"
-
-          if [[ ! -f "$file" ]]; then
-            echo "Error: '$file' not found." >&2
-            exit 1
-          fi
-
+          [[ -f "$file" ]] || { echo "Error: '$file' not found."; exit 1; }
           current="$(tr -d ' \n' < "$file")"
-          if [[ -z "$current" ]]; then
-            echo "Error: '$file' is empty." >&2
-            exit 1
-          fi
-
+          [[ -n "$current" ]] || { echo "Error: '$file' is empty."; exit 1; }
           base="${current%%-*}"
           suffix="${current#"$base"}"
-
-          if ! [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Error: Version '$base' must be in format major.minor.patch" >&2
-            exit 1
-          fi
-
+          [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Error: Version '$base' must be major.minor.patch"; exit 1; }
           IFS='.' read -r major minor patch <<< "$base"
-
           patch=$((patch + 1))
-          if (( patch >= 100 )); then
-            patch=0
-            minor=$((minor + 1))
-          fi
-
-          if (( minor >= 100 )); then
-            minor=0
-            major=$((major + 1))
-          fi
-
+          if (( patch >= 100 )); then patch=0; minor=$((minor + 1)); fi
+          if (( minor >= 100 )); then minor=0; major=$((major + 1)); fi
           new=$(printf "%d.%02d.%02d%s" "$major" "$minor" "$patch" "$suffix")
           echo "$new" > "$file"
           echo "new=$new" >> "$GITHUB_OUTPUT"
