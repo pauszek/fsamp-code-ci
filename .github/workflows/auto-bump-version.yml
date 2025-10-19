@@ -35,7 +35,7 @@ jobs:
           patch=$((patch + 1))
           if (( patch >= 100 )); then patch=0; minor=$((minor + 1)); fi
           if (( minor >= 100 )); then minor=0; major=$((major + 1)); fi
-          new=$(printf "%d.%02d.%02d%s" "$major" "$minor" "$patch" "$suffix")
+          new=$(printf "%d.%d.%d%s" "$major" "$minor" "$patch" "$suffix")
           echo "$new" > "$file"
           echo "new=$new" >> "$GITHUB_OUTPUT"
 

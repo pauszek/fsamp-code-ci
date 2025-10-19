@@ -2,7 +2,7 @@ name: Publish Shared Library on Release
 
 on:
   release:
-    types: [published]
+    types: [ published ]
 
 jobs:
   publish:
@@ -27,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ -f release.version ]] || { echo "release.version not found"; exit 1; }
-          echo "value=$(tr -d ' \n' < release.version)" >> "$GITHUB_OUTPUT"
+          echo "value=$(tr -d ' \r\n' < release.version)" >> "$GITHUB_OUTPUT"
 
       - name: Build and publish
         env:
