@@ -2,7 +2,7 @@ name: Debug workflow_run
 
 on:
   workflow_run:
-    workflows: [ "Build" ]
+    workflows: [ Build ]
     branches: [ main ]
     types: [ completed, requested ]
 
