@@ -19,11 +19,19 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.GABRBA_APPID }}
+          private-key: ${{ secrets.GABRBA_SECRET }}
+
       - name: Checkout triggering commit
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ github.event.workflow_run.head_sha }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Bump release.version (patch with rollover)
         id: bump
@@ -49,6 +57,7 @@ jobs:
         id: cpr
         uses: peter-evans/create-pull-request@v6
         with:
+          token: ${{ steps.app-token.outputs.token }}
           commit-message: "[skip ci] chore: bump release.version to ${{ steps.bump.outputs.new }}"
           title: "[skip ci] chore: bump release.version to ${{ steps.bump.outputs.new }}"
           body: "Automated bump from Build run ${{ github.event.workflow_run.id }}."
@@ -61,6 +70,6 @@ jobs:
         if: steps.cpr.outputs.pull-request-number != ''
         uses: peter-evans/enable-pull-request-automerge@v3
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           pull-request-number: ${{ steps.cpr.outputs.pull-request-number }}
           merge-method: squash
