@@ -9,15 +9,16 @@ concurrency:
   group: auto-bump-pr-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   pr-bump:
     if: >
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
     steps:
       - name: Generate GitHub App Token
         id: app-token
