@@ -66,6 +66,12 @@ jobs:
           labels: autobump
           delete-branch: true
 
+      - name: Auto approve
+        if: steps.cpr.outputs.pull-request-operation == 'created' && steps.cpr.outputs.pull-request-number != ''
+        run: gh pr review --approve "${{ steps.cpr.outputs.pull-request-number }}"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
       - name: Enable auto-merge (squash)
         if: steps.cpr.outputs.pull-request-number != ''
         uses: peter-evans/enable-pull-request-automerge@v3
