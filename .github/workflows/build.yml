@@ -16,6 +16,11 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - name: Maven Build
         uses: ./.github/actions/maven-build
         with:
@@ -32,6 +37,11 @@ jobs:
       pull-requests: write
       checks: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - name: Qodana
         uses: ./.github/actions/qodana-scan
         with:
@@ -46,6 +56,11 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - name: Bump release.version via PR
         uses: ./.github/actions/bump-release-version
         with:
