@@ -2,6 +2,7 @@ name: Build
 on:
   pull_request:
     branches: [ main ]
+    types: [ opened, synchronize, reopened, ready_for_review ]
   push:
     branches: [ main ]
 
@@ -12,17 +13,44 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-java@v4
+      - name: Maven Build
+        uses: ./.github/actions/maven-build
         with:
-          distribution: temurin
           java-version: '21'
-          cache: maven
-      - name: Build with explicit revision
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ -s 'release.version' ]] || { echo "Error: 'release.version' missing or empty."; exit 1; }
-          REV="$(tr -d ' \r\n' < 'release.version')"
-          mvn -B -ntp -Drevision="${REV}" verify
+          distribution: temurin
+          revision-file: 'release.version'
+
+  qodana:
+    needs: build
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    steps:
+      - name: Qodana
+        uses: ./.github/actions/qodana-scan
+        with:
+          qodana-token: ${{ secrets.QODANA_TOKEN }}
+          post-pr-comment: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+
+  bump:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Bump release.version via PR
+        uses: ./.github/actions/bump-release-version
+        with:
+          app-id: ${{ vars.GABRBA_APPID }}
+          private-key: ${{ secrets.GABRBA_SECRET }}
+          version-file: 'release.version'
+          base-branch: 'main'
+          label: 'autobump'
