@@ -116,6 +116,7 @@ jobs:
 
   tag_and_release:
     needs: [ params, build ]
+    if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -170,7 +171,7 @@ jobs:
 
   publish:
     needs: [ params, build, tag_and_release ]
-    if: needs.tag_and_release.outputs.proceed == 'true' && needs.tag_and_release.outputs.full_release == 'true'
+    if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch && needs.tag_and_release.outputs.proceed == 'true' && needs.tag_and_release.outputs.full_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
