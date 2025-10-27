@@ -54,9 +54,41 @@ jobs:
           w("release_full_release", str(rel.get("full-release", False)).lower())
           PY
 
-  bump:
+  tag_and_release:
     needs: [ params ]
-    if: needs.params.outputs.bump_enabled == 'true' && github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
+    if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      proceed: ${{ steps.cfg.outputs.proceed }}
+      full_release: ${{ steps.cfg.outputs.full_release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Configure release outputs
+        id: cfg
+        shell: bash
+        env:
+          FULL: ${{ needs.params.outputs.release_full_release }}
+        run: |
+          set -euo pipefail
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+          echo "full_release=${FULL:-false}" >> "$GITHUB_OUTPUT"
+
+      - name: Tag and (pre)-release
+        uses: ./.github/actions/tag-and-release
+        with:
+          version-file: ${{ needs.params.outputs.files_version }}
+          full_release: ${{ steps.cfg.outputs.full_release }}
+          tag-prefix: v
+
+  bump:
+    needs: [ params, tag_and_release ]
+    if: needs.params.outputs.bump_enabled == 'true' && github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch && needs.tag_and_release.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -74,73 +106,3 @@ jobs:
           version-file: ${{ needs.params.outputs.files_version }}
           base-branch: ${{ needs.params.outputs.bump_base_branch }}
           label: ${{ needs.params.outputs.bump_label }}
-
-  tag_and_release:
-    needs: [ params ]
-    if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      proceed: ${{ steps.flags.outputs.proceed }}
-      full_release: ${{ steps.flags.outputs.full_release }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Detect version file change in this commit
-        id: detect
-        shell: bash
-        env:
-          FILE: ${{ needs.params.outputs.files_version }}
-        run: |
-          set -euo pipefail
-          if git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" | grep -x "$FILE" >/dev/null; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Resolve flags
-        id: flags
-        shell: bash
-        env:
-          INP: ${{ needs.params.outputs.release_full_release }}
-          CHANGED: ${{ steps.detect.outputs.changed }}
-        run: |
-          set -euo pipefail
-          if [[ "${INP:-false}" == "true" ]]; then
-            echo "proceed=true" >> "$GITHUB_OUTPUT"
-            echo "full_release=true" >> "$GITHUB_OUTPUT"
-          elif [[ "${CHANGED:-false}" == "true" ]]; then
-            echo "proceed=true" >> "$GITHUB_OUTPUT"
-            echo "full_release=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "proceed=false" >> "$GITHUB_OUTPUT"
-            echo "full_release=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Tag and (pre)-release
-        if: steps.flags.outputs.proceed == 'true'
-        uses: ./.github/actions/tag-and-release
-        with:
-          version-file: ${{ needs.params.outputs.files_version }}
-          full_release: ${{ steps.flags.outputs.full_release }}
-          tag-prefix: v
-
-  publish:
-    needs: [ params, tag_and_release ]
-    if: github.event_name == 'push' && needs.tag_and_release.outputs.proceed == 'true' && needs.tag_and_release.outputs.full_release == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - name: Publish package
-        uses: ./.github/actions/publish
