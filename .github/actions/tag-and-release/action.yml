@@ -1,5 +1,5 @@
-name: Create tag and \(\pre\)\-release from version file
-description: Create or update a tag and GitHub Release based on a version file. Pre\-release by default; full release when full_release\=true.
+name: Create tag and (pre)-release from version file
+description: Create or update a tag and GitHub Release based on a version file. Pre-release by default; full release when full_release=true.
 inputs:
   version-file:
     description: Path to version file
