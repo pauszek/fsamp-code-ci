@@ -1,0 +1,43 @@
+name: Create tag and (pre)-release from version file
+description: Create or update a tag and GitHub Release based on a version file. Pre-release by default; full release when full_release=true.
+inputs:
+  version-file:
+    description: Path to version file
+    required: false
+    default: release.version
+  full_release:
+    description: If true, create/promote to full release; otherwise pre-release
+    required: false
+    default: "false"
+  tag-prefix:
+    description: Prefix for tag name
+    required: false
+    default: "v"
+runs:
+  using: composite
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+
+    - name: Read version
+      id: ver
+      shell: bash
+      run: |
+        set -euo pipefail
+        file="${{ inputs.version-file }}"
+        [[ -s "$file" ]] || { echo "Version file '$file' not found or empty"; exit 1; }
+        v="$(tr -d ' \r\n' < "$file")"
+        echo "value=$v" >> "$GITHUB_OUTPUT"
+
+    - name: Create or update release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ inputs.tag-prefix }}${{ steps.ver.outputs.value }}
+        name: ${{ inputs.tag-prefix }}${{ steps.ver.outputs.value }}
+        prerelease: ${{ inputs.full_release != 'true' }}
+        generate_release_notes: true
+        make_latest: ${{ inputs.full_release == 'true' }}
+      env:
+        GITHUB_TOKEN: ${{ github.token }}

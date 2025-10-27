@@ -1,0 +1,13 @@
+ci:
+  java-version: '21'
+  distribution: temurin
+files:
+  version: release.version
+qodana:
+  enabled: false
+bump:
+  enabled: true
+  base-branch: main
+  label: autobump
+release:
+  full-release: false

@@ -1,0 +1,146 @@
+name: Repo CI (no build)
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [ opened, synchronize, reopened, ready_for_review ]
+  push:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  params:
+    name: Load params
+    runs-on: ubuntu-latest
+    outputs:
+      files_version: ${{ steps.out.outputs.files_version }}
+      bump_enabled: ${{ steps.out.outputs.bump_enabled }}
+      bump_base_branch: ${{ steps.out.outputs.bump_base_branch }}
+      bump_label: ${{ steps.out.outputs.bump_label }}
+      release_full_release: ${{ steps.out.outputs.release_full_release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Install PyYAML
+        run: pip3 install --disable-pip-version-check --no-input pyyaml
+      - name: Parse .github/params.yml
+        id: out
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, yaml
+          path = ".github/params.yml"
+          data = {}
+          try:
+              with open(path) as f:
+                  data = yaml.safe_load(f) or {}
+          except FileNotFoundError:
+              data = {}
+          files = data.get("files", {}) or {}
+          bump = data.get("bump", {}) or {}
+          rel = data.get("release", {}) or {}
+          def w(k,v):
+              with open(os.environ["GITHUB_OUTPUT"], "a") as o: o.write(f"{k}={v}\n")
+          w("files_version", files.get("version","release.version"))
+          w("bump_enabled", str(bump.get("enabled", True)).lower())
+          w("bump_base_branch", bump.get("base-branch","main"))
+          w("bump_label", bump.get("label","autobump"))
+          w("release_full_release", str(rel.get("full-release", False)).lower())
+          PY
+
+  bump:
+    needs: [ params ]
+    if: needs.params.outputs.bump_enabled == 'true' && github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Bump release.version via PR
+        uses: ./.github/actions/bump-release-version
+        with:
+          app-id: ${{ vars.GABRBA_APPID }}
+          private-key: ${{ secrets.GABRBA_SECRET }}
+          version-file: ${{ needs.params.outputs.files_version }}
+          base-branch: ${{ needs.params.outputs.bump_base_branch }}
+          label: ${{ needs.params.outputs.bump_label }}
+
+  tag_and_release:
+    needs: [ params ]
+    if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      proceed: ${{ steps.flags.outputs.proceed }}
+      full_release: ${{ steps.flags.outputs.full_release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect version file change in this commit
+        id: detect
+        shell: bash
+        env:
+          FILE: ${{ needs.params.outputs.files_version }}
+        run: |
+          set -euo pipefail
+          if git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" | grep -x "$FILE" >/dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve flags
+        id: flags
+        shell: bash
+        env:
+          INP: ${{ needs.params.outputs.release_full_release }}
+          CHANGED: ${{ steps.detect.outputs.changed }}
+        run: |
+          set -euo pipefail
+          if [[ "${INP:-false}" == "true" ]]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "full_release=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${CHANGED:-false}" == "true" ]]; then
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "full_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "full_release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tag and (pre)-release
+        if: steps.flags.outputs.proceed == 'true'
+        uses: ./.github/actions/tag-and-release
+        with:
+          version-file: ${{ needs.params.outputs.files_version }}
+          full_release: ${{ steps.flags.outputs.full_release }}
+          tag-prefix: v
+
+  publish:
+    needs: [ params, tag_and_release ]
+    if: github.event_name == 'push' && needs.tag_and_release.outputs.proceed == 'true' && needs.tag_and_release.outputs.full_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Publish package
+        uses: ./.github/actions/publish
