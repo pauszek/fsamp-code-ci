@@ -10,4 +10,5 @@ bump:
   base-branch: main
   label: autobump
 release:
-  full-release: false
+  full-release: true
+  publish: false

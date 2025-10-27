@@ -19,6 +19,7 @@ jobs:
       bump_base_branch: ${{ steps.out.outputs.bump_base_branch }}
       bump_label: ${{ steps.out.outputs.bump_label }}
       release_full_release: ${{ steps.out.outputs.release_full_release }}
+      release_publish: ${{ steps.out.outputs.release_publish }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -171,7 +172,7 @@ jobs:
 
   publish:
     needs: [ params, build, tag_and_release ]
-    if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch && needs.tag_and_release.outputs.proceed == 'true' && needs.tag_and_release.outputs.full_release == 'true'
+    if: needs.params.outputs.release_publish == 'true' && github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch && needs.tag_and_release.outputs.proceed == 'true' && needs.tag_and_release.outputs.full_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
