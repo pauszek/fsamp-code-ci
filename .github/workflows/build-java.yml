@@ -101,7 +101,6 @@ jobs:
     permissions:
       contents: write
     outputs:
-      proceed: ${{ steps.cfg.outputs.proceed }}
       full_release: ${{ steps.cfg.outputs.full_release }}
     steps:
       - name: Checkout
@@ -116,7 +115,6 @@ jobs:
           FULL: ${{ needs.params.outputs.release_full_release }}
         run: |
           set -euo pipefail
-          echo "proceed=true" >> "$GITHUB_OUTPUT"
           echo "full_release=${FULL:-false}" >> "$GITHUB_OUTPUT"
 
       - name: Tag and (pre)-release
@@ -128,7 +126,7 @@ jobs:
 
   publish:
     needs: [ params, build, tag_and_release ]
-    if: needs.params.outputs.release_publish == 'true' && github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch && needs.tag_and_release.outputs.proceed == 'true' && needs.tag_and_release.outputs.full_release == 'true'
+    if: needs.params.outputs.release_publish == 'true' && github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch && needs.tag_and_release.outputs.full_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

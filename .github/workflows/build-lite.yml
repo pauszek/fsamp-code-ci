@@ -61,7 +61,6 @@ jobs:
     permissions:
       contents: write
     outputs:
-      proceed: ${{ steps.cfg.outputs.proceed }}
       full_release: ${{ steps.cfg.outputs.full_release }}
     steps:
       - name: Checkout
@@ -76,7 +75,6 @@ jobs:
           FULL: ${{ needs.params.outputs.release_full_release }}
         run: |
           set -euo pipefail
-          echo "proceed=true" >> "$GITHUB_OUTPUT"
           echo "full_release=${FULL:-false}" >> "$GITHUB_OUTPUT"
 
       - name: Tag and (pre)-release
