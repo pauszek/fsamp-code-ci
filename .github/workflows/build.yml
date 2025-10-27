@@ -96,7 +96,7 @@ jobs:
 
   bump:
     needs: [ params, build ]
-    if: needs.params.outputs.bump_enabled == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: needs.params.outputs.bump_enabled == 'true' && github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
     runs-on: ubuntu-latest
     permissions:
       contents: write
