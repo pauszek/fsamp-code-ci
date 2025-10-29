@@ -69,7 +69,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Maven Build
-        uses: ./.github/actions/maven-build
+        uses: pauszek/fsamp-code-ci/.github/actions/maven-build@v0.0.7
         with:
           java-version: ${{ needs.params.outputs.ci_java_version }}
           distribution: ${{ needs.params.outputs.ci_distribution }}
@@ -89,7 +89,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Qodana
-        uses: ./.github/actions/qodana-scan
+        uses: pauszek/fsamp-code-ci/.github/actions/qodana-scan@v0.0.7
         with:
           qodana-token: ${{ secrets.QODANA_TOKEN }}
           post-pr-comment: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
@@ -118,7 +118,7 @@ jobs:
           echo "full_release=${FULL:-false}" >> "$GITHUB_OUTPUT"
 
       - name: Tag and (pre)-release
-        uses: ./.github/actions/tag-and-release
+        uses: pauszek/fsamp-code-ci/.github/actions/tag-and-release@v0.0.7
         with:
           version-file: ${{ needs.params.outputs.files_version }}
           full_release: ${{ steps.cfg.outputs.full_release }}
@@ -137,7 +137,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Publish package
-        uses: ./.github/actions/publish
+        uses: pauszek/fsamp-code-ci/.github/actions/publish@v0.0.7
 
   bump:
     needs: [ params, build, tag_and_release ]
@@ -152,7 +152,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Bump release.version via PR
-        uses: ./.github/actions/bump-release-version
+        uses: pauszek/fsamp-code-ci/.github/actions/bump-release-version@v0.0.7
         with:
           app-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}
