@@ -20,7 +20,6 @@ jobs:
       bump_label: ${{ steps.out.outputs.bump_label }}
       release_full_release: ${{ steps.out.outputs.release_full_release }}
       release_publish: ${{ steps.out.outputs.release_publish }}
-      action_repo: ${{ steps.action-meta.outputs.repo }}
       action_ref: ${{ steps.action-meta.outputs.ref }}
     steps:
       - name: Checkout
@@ -34,8 +33,6 @@ jobs:
           path_parts=(${GITHUB_ACTION_PATH//\// })
           count=${#path_parts[@]}
           ref=${path_parts[count-2]}
-          repo="${path_parts[count-4]}/${path_parts[count-3]}"
-          echo "repo=$repo" >> "$GITHUB_OUTPUT"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - name: Install PyYAML
         run: pip3 install --disable-pip-version-check --no-input pyyaml
@@ -82,7 +79,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Maven Build
-        uses: ${{ needs.params.outputs.action_repo }}/.github/actions/maven-build@${{ needs.params.outputs.action_ref }}
+        uses: pauszek/fsamp-code-ci/.github/actions/maven-build@${{ needs.params.outputs.action_ref }}
         with:
           java-version: ${{ needs.params.outputs.ci_java_version }}
           distribution: ${{ needs.params.outputs.ci_distribution }}
@@ -102,7 +99,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Qodana
-        uses: ${{ needs.params.outputs.action_repo }}/.github/actions/qodana-scan@${{ needs.params.outputs.action_ref }}
+        uses: pauszek/fsamp-code-ci/.github/actions/qodana-scan@${{ needs.params.outputs.action_ref }}
         with:
           qodana-token: ${{ secrets.QODANA_TOKEN }}
           post-pr-comment: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
@@ -131,7 +128,7 @@ jobs:
           echo "full_release=${FULL:-false}" >> "$GITHUB_OUTPUT"
 
       - name: Tag and (pre)-release
-        uses: ${{ needs.params.outputs.action_repo }}/.github/actions/tag-and-release@${{ needs.params.outputs.action_ref }}
+        uses: pauszek/fsamp-code-ci/.github/actions/tag-and-release@${{ needs.params.outputs.action_ref }}
         with:
           version-file: ${{ needs.params.outputs.files_version }}
           full_release: ${{ steps.cfg.outputs.full_release }}
@@ -150,7 +147,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Publish package
-        uses: ${{ needs.params.outputs.action_repo }}/.github/actions/publish@${{ needs.params.outputs.action_ref }}
+        uses: pauszek/fsamp-code-ci/.github/actions/publish@${{ needs.params.outputs.action_ref }}
 
   bump:
     needs: [ params, build, tag_and_release ]
@@ -165,7 +162,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Bump release.version via PR
-        uses: ${{ needs.params.outputs.action_repo }}/.github/actions/bump-release-version@${{ needs.params.outputs.action_ref }}
+        uses: pauszek/fsamp-code-ci/.github/actions/bump-release-version@${{ needs.params.outputs.action_ref }}
         with:
           app-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}
