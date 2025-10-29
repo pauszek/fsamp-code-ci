@@ -56,6 +56,7 @@ jobs:
           w("bump_base_branch", bump.get("base-branch","main"))
           w("bump_label", bump.get("label","autobump"))
           w("release_full_release", str(rel.get("full-release", False)).lower())
+          w("release_publish", str(rel.get("publish", False)).lower())
           PY
 
   build:
