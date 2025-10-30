@@ -59,19 +59,11 @@ runs:
       env:
         SETTINGS_PATH: ${{ inputs['settings-path'] }}
         SKIP_TESTS: ${{ inputs['skip-tests'] }}
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
         mvn_args=(-B clean deploy -s "$SETTINGS_PATH/settings.xml")
-
-        if [[ "${SKIP_TESTS,,}" == "true" ]]; then
-          mvn_args+=(-DskipTests)
-        fi
-
+        if [[ "${SKIP_TESTS,,}" == "true" ]]; then mvn_args+=(-DskipTests); fi
         REV="${{ steps.rev.outputs.rev }}"
-        if [[ -n "$REV" ]]; then
-          mvn_args+=(-Drevision="$REV")
-        else
-          echo "No revision provided; relying on fallback profile."
-        fi
-
+        if [[ -n "$REV" ]]; then mvn_args+=(-Drevision="$REV"); else echo "No revision provided; relying on fallback profile."; fi
         mvn "${mvn_args[@]}"
