@@ -1,44 +1,77 @@
-name: Publish Shared Library on Release
+name: Publish Maven Package
+description: Build and publish a Maven package using a revision read from file
+inputs:
+  java-version:
+    description: Java version
+    required: false
+    default: '21'
+  distribution:
+    description: JDK distribution
+    required: false
+    default: 'temurin'
+  revision-file:
+    description: Path to file with revision
+    required: false
+    default: 'release.version'
+  server-id:
+    description: Maven server id to configure in settings.xml
+    required: false
+    default: 'github'
+  settings-path:
+    description: Directory where settings.xml will be written
+    required: false
+    default: '.'
+  skip-tests:
+    description: Whether to skip tests during deploy
+    required: false
+    default: 'true'
 
-on:
-  release:
-    types: [ published ]
+runs:
+  using: composite
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v5
 
-jobs:
-  publish:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v5
-      - name: Set up JDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: maven
-          server-id: github
-          settings-path: ${{ github.workspace }}
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: ${{ inputs.distribution }}
+        java-version: ${{ inputs['java-version'] }}
+        cache: maven
+        server-id: ${{ inputs['server-id'] }}
+        settings-path: ${{ inputs['settings-path'] }}
 
-      - name: Read version from release.version
-        id: ver
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ -s release.version ]] || { echo "release.version not found or empty"; exit 1; }
-          echo "value=$(tr -d ' \r\n' < release.version)" >> "$GITHUB_OUTPUT"
+    - name: Read version from revision file
+      id: rev
+      shell: bash
+      run: |
+        set -euo pipefail
+        file="${{ inputs['revision-file'] }}"
+        if [[ -s "$file" ]]; then
+          REV="$(tr -d ' \r\n' < "$file")"
+          echo "rev=$REV" >> "$GITHUB_OUTPUT"
+        else
+          echo "rev=" >> "$GITHUB_OUTPUT"
+        fi
 
-      - name: Build and publish
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REVISION: ${{ steps.ver.outputs.value }}
-        run: |
-          set -euo pipefail
-          if [[ -n "${REVISION:-}" ]]; then
-            mvn -B clean deploy -DskipTests -Drevision="$REVISION" -s "$GITHUB_WORKSPACE/settings.xml"
-          else
-            echo "No revision provided; relying on fallback profile."
-            mvn -B clean deploy -DskipTests -s "$GITHUB_WORKSPACE/settings.xml"
-          fi
+    - name: Build and publish
+      shell: bash
+      env:
+        SETTINGS_PATH: ${{ inputs['settings-path'] }}
+        SKIP_TESTS: ${{ inputs['skip-tests'] }}
+      run: |
+        set -euo pipefail
+        mvn_args=(-B clean deploy -s "$SETTINGS_PATH/settings.xml")
+
+        if [[ "${SKIP_TESTS,,}" == "true" ]]; then
+          mvn_args+=(-DskipTests)
+        fi
+
+        REV="${{ steps.rev.outputs.rev }}"
+        if [[ -n "$REV" ]]; then
+          mvn_args+=(-Drevision="$REV")
+        else
+          echo "No revision provided; relying on fallback profile."
+        fi
+
+        mvn "${mvn_args[@]}"
