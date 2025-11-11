@@ -125,21 +125,6 @@ jobs:
           full_release: ${{ steps.cfg.outputs.full_release }}
           tag-prefix: v
 
-  publish:
-    needs: [ params, build, tag_and_release ]
-    if: needs.params.outputs.release_publish == 'true' && github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch && needs.tag_and_release.outputs.full_release == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - name: Publish package
-        uses: pauszek/fsamp-code-ci/.github/actions/publish@main
-
   bump:
     needs: [ params, build, tag_and_release ]
     if: needs.params.outputs.bump_enabled == 'true' && github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch && needs.tag_and_release.result == 'success'

@@ -1,11 +1,6 @@
-name: Repo CI (no build)
-
+name: Build for Python Project
 on:
-  pull_request:
-    branches: [ main ]
-    types: [ opened, synchronize, reopened, ready_for_review ]
-  push:
-    branches: [ main ]
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -16,7 +11,9 @@ jobs:
     name: Load params
     runs-on: ubuntu-latest
     outputs:
+      ci_python_version: ${{ steps.out.outputs.ci_python_version }}
       files_version: ${{ steps.out.outputs.files_version }}
+      qodana_enabled: ${{ steps.out.outputs.qodana_enabled }}
       bump_enabled: ${{ steps.out.outputs.bump_enabled }}
       bump_base_branch: ${{ steps.out.outputs.bump_base_branch }}
       bump_label: ${{ steps.out.outputs.bump_label }}
@@ -43,12 +40,16 @@ jobs:
                   data = yaml.safe_load(f) or {}
           except FileNotFoundError:
               data = {}
+          ci = data.get("ci", {}) or {}
           files = data.get("files", {}) or {}
+          qod = data.get("qodana", {}) or {}
           bump = data.get("bump", {}) or {}
           rel = data.get("release", {}) or {}
           def w(k,v):
               with open(os.environ["GITHUB_OUTPUT"], "a") as o: o.write(f"{k}={v}\n")
+          w("ci_python_version", ci.get("python-version","3.11"))
           w("files_version", files.get("version","release.version"))
+          w("qodana_enabled", str(qod.get("enabled", False)).lower())
           w("bump_enabled", str(bump.get("enabled", True)).lower())
           w("bump_base_branch", bump.get("base-branch","main"))
           w("bump_label", bump.get("label","autobump"))
@@ -56,8 +57,47 @@ jobs:
           w("release_publish", str(rel.get("publish", False)).lower())
           PY
 
+  build:
+    needs: params
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ needs.params.outputs.ci_python_version }}
+          cache: 'pip'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run tests with pytest
+        run: pytest
+
+  qodana:
+    needs: [ params, build ]
+    if: needs.params.outputs.qodana_enabled == 'true' && github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Qodana
+        uses: pauszek/fsamp-code-ci/.github/actions/qodana-scan@main
+        with:
+          qodana-token: ${{ secrets.QODANA_TOKEN }}
+          post-pr-comment: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+
   tag_and_release:
-    needs: [ params ]
+    needs: [ params, build ]
     if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
     runs-on: ubuntu-latest
     permissions:
@@ -80,29 +120,14 @@ jobs:
           echo "full_release=${FULL:-false}" >> "$GITHUB_OUTPUT"
 
       - name: Tag and (pre)-release
-        uses: ./.github/actions/tag-and-release
+        uses: pauszek/fsamp-code-ci/.github/actions/tag-and-release@main
         with:
           version-file: ${{ needs.params.outputs.files_version }}
           full_release: ${{ steps.cfg.outputs.full_release }}
           tag-prefix: v
 
-  publish:
-    needs: [ params, tag_and_release ]
-    if: needs.params.outputs.release_publish == 'true' && github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch && needs.tag_and_release.outputs.full_release == 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - name: Publish package
-        uses: ./.github/actions/publish
-
   bump:
-    needs: [ params, tag_and_release ]
+    needs: [ params, build, tag_and_release ]
     if: needs.params.outputs.bump_enabled == 'true' && github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch && needs.tag_and_release.result == 'success'
     runs-on: ubuntu-latest
     permissions:
@@ -114,7 +139,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Bump release.version via PR
-        uses: ./.github/actions/bump-release-version
+        uses: pauszek/fsamp-code-ci/.github/actions/bump-release-version@main
         with:
           app-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}
