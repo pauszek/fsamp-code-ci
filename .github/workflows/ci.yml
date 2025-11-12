@@ -8,5 +8,5 @@ on:
 
 jobs:
   build-lite:
-    uses: ./.github/workflows/build-lite.yml@main
+    uses: ./.github/workflows/build-lite.yml
     secrets: inherit
