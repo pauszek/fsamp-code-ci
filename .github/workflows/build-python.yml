@@ -1,4 +1,4 @@
-name: Build for Java Project
+name: Build for Python Project
 on:
   workflow_call:
 
@@ -11,8 +11,7 @@ jobs:
     name: Load params
     runs-on: ubuntu-latest
     outputs:
-      ci_java_version: ${{ steps.out.outputs.ci_java_version }}
-      ci_distribution: ${{ steps.out.outputs.ci_distribution }}
+      ci_python_version: ${{ steps.out.outputs.ci_python_version }}
       files_version: ${{ steps.out.outputs.files_version }}
       qodana_enabled: ${{ steps.out.outputs.qodana_enabled }}
       bump_enabled: ${{ steps.out.outputs.bump_enabled }}
@@ -47,8 +46,7 @@ jobs:
           rel = data.get("release", {}) or {}
           def w(k,v):
               with open(os.environ["GITHUB_OUTPUT"], "a") as o: o.write(f"{k}={v}\n")
-          w("ci_java_version", ci.get("java-version","21"))
-          w("ci_distribution", ci.get("distribution","temurin"))
+          w("ci_python_version", ci.get("python-version","3.11"))
           w("files_version", files.get("version","release.version"))
           w("qodana_enabled", str(qod.get("enabled", False)).lower())
           w("bump_enabled", str(bump.get("enabled", True)).lower())
@@ -67,12 +65,15 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Maven Build
-        uses: pauszek/fsamp-code-ci/.github/actions/maven-build@main
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          java-version: ${{ needs.params.outputs.ci_java_version }}
-          distribution: ${{ needs.params.outputs.ci_distribution }}
-          revision-file: ${{ needs.params.outputs.files_version }}
+          python-version: ${{ needs.params.outputs.ci_python_version }}
+          cache: 'pip'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run tests with pytest
+        run: pytest
 
   qodana:
     needs: [ params, build ]
