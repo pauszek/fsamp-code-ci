@@ -1,11 +1,6 @@
 name: Repo CI (no build)
-
 on:
-  pull_request:
-    branches: [ main ]
-    types: [ opened, synchronize, reopened, ready_for_review ]
-  push:
-    branches: [ main ]
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -21,6 +16,7 @@ jobs:
       bump_base_branch: ${{ steps.out.outputs.bump_base_branch }}
       bump_label: ${{ steps.out.outputs.bump_label }}
       release_full_release: ${{ steps.out.outputs.release_full_release }}
+      release_publish: ${{ steps.out.outputs.release_publish }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -52,6 +48,7 @@ jobs:
           w("bump_base_branch", bump.get("base-branch","main"))
           w("bump_label", bump.get("label","autobump"))
           w("release_full_release", str(rel.get("full-release", False)).lower())
+          w("release_publish", str(rel.get("publish", False)).lower())
           PY
 
   tag_and_release:
@@ -78,11 +75,26 @@ jobs:
           echo "full_release=${FULL:-false}" >> "$GITHUB_OUTPUT"
 
       - name: Tag and (pre)-release
-        uses: ./.github/actions/tag-and-release
+        uses: pauszek/fsamp-code-ci/.github/actions/tag-and-release@main
         with:
           version-file: ${{ needs.params.outputs.files_version }}
           full_release: ${{ steps.cfg.outputs.full_release }}
           tag-prefix: v
+
+  publish:
+    needs: [ params, tag_and_release ]
+    if: needs.params.outputs.release_publish == 'true' && github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch && needs.tag_and_release.outputs.full_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Publish package
+        uses: pauszek/fsamp-code-ci/.github/actions/publish@main
 
   bump:
     needs: [ params, tag_and_release ]
@@ -97,7 +109,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Bump release.version via PR
-        uses: ./.github/actions/bump-release-version
+        uses: pauszek/fsamp-code-ci/.github/actions/bump-release-version@main
         with:
           app-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}
