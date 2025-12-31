@@ -1,0 +1,166 @@
+name: Build for Terraform Project
+on:
+  workflow_call:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  params:
+    name: Load params
+    runs-on: ubuntu-latest
+    outputs:
+      files_version: ${{ steps.out.outputs.files_version }}
+      bump_enabled: ${{ steps.out.outputs.bump_enabled }}
+      bump_base_branch: ${{ steps.out.outputs.bump_base_branch }}
+      bump_label: ${{ steps.out.outputs.bump_label }}
+      release_full_release: ${{ steps.out.outputs.release_full_release }}
+      tf_working_directory: ${{ steps.out.outputs.tf_working_directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install PyYAML
+        run: pip3 install --disable-pip-version-check --no-input pyyaml
+
+      - name: Parse .github/params.yml
+        id: out
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, yaml
+          path = ".github/params.yml"
+          data = {}
+          try:
+              with open(path) as f:
+                  data = yaml.safe_load(f) or {}
+          except FileNotFoundError:
+              data = {}
+          files = data.get("files", {}) or {}
+          bump = data.get("bump", {}) or {}
+          rel = data.get("release", {}) or {}
+          tf = data.get("terraform", {}) or {}
+          def w(k,v):
+              with open(os.environ["GITHUB_OUTPUT"], "a") as o: o.write(f"{k}={v}\n")
+          w("files_version", files.get("version","release.version"))
+          w("bump_enabled", str(bump.get("enabled", True)).lower())
+          w("bump_base_branch", bump.get("base-branch","main"))
+          w("bump_label", bump.get("label","autobump"))
+          w("release_full_release", str(rel.get("full-release", False)).lower())
+          w("tf_working_directory", tf.get("working-directory","terraform"))
+          PY
+
+  terraform:
+    name: Terraform Validate
+    needs: params
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ needs.params.outputs.tf_working_directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.7"
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init (validation only)
+        run: |
+          for env in environments/*/; do
+            echo "::group::Init $env"
+            terraform -chdir="$env" init -backend=false
+            echo "::endgroup::"
+          done
+
+      - name: Terraform Validate
+        run: |
+          for env in environments/*/; do
+            echo "::group::Validate $env"
+            terraform -chdir="$env" validate
+            echo "::endgroup::"
+          done
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+
+      - name: TFLint Init
+        run: tflint --init
+        continue-on-error: true
+
+      - name: TFLint
+        run: tflint --recursive
+        continue-on-error: true
+
+      - name: Run Checkov (Security Scan)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ needs.params.outputs.tf_working_directory }}
+          framework: terraform
+          soft_fail: true
+          output_format: cli
+          download_external_modules: false
+
+  tag_and_release:
+    name: Tag and Release
+    needs: [params, terraform]
+    if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      full_release: ${{ steps.cfg.outputs.full_release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure release outputs
+        id: cfg
+        shell: bash
+        env:
+          FULL: ${{ needs.params.outputs.release_full_release }}
+        run: |
+          set -euo pipefail
+          echo "full_release=${FULL:-false}" >> "$GITHUB_OUTPUT"
+
+      - name: Tag and (pre)-release
+        uses: pauszek/fsamp-code-ci/.github/actions/tag-and-release@main
+        with:
+          version-file: ${{ needs.params.outputs.files_version }}
+          full_release: ${{ steps.cfg.outputs.full_release }}
+          tag-prefix: v
+
+  bump:
+    name: Bump Version
+    needs: [params, terraform, tag_and_release]
+    if: needs.params.outputs.bump_enabled == 'true' && github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch && needs.tag_and_release.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump release.version via PR
+        uses: pauszek/fsamp-code-ci/.github/actions/bump-release-version@main
+        with:
+          app-id: ${{ vars.GABRBA_APPID }}
+          private-key: ${{ secrets.GABRBA_SECRET }}
+          version-file: ${{ needs.params.outputs.files_version }}
+          base-branch: ${{ needs.params.outputs.bump_base_branch }}
+          label: ${{ needs.params.outputs.bump_label }}
