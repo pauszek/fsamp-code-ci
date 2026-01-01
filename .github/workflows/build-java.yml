@@ -1,4 +1,5 @@
 name: Build for Java Project
+
 on:
   workflow_call:
 
@@ -6,9 +7,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# =============================================================================
+# JOBS
+# =============================================================================
 jobs:
+  # ---------------------------------------------------------------------------
+  # 1. PARAMS - Load Configuration
+  # ---------------------------------------------------------------------------
   params:
-    name: Load params
+    name: 📋 Load Configuration
     runs-on: ubuntu-latest
     outputs:
       ci_java_version: ${{ steps.out.outputs.ci_java_version }}
@@ -22,17 +29,20 @@ jobs:
       docker_enabled: ${{ steps.out.outputs.docker_enabled }}
       docker_image_name: ${{ steps.out.outputs.docker_image_name }}
       docker_registry: ${{ steps.out.outputs.docker_registry }}
+      docker_dockerfile: ${{ steps.out.outputs.docker_dockerfile }}
       sonar_enabled: ${{ steps.out.outputs.sonar_enabled }}
       sonar_organization: ${{ steps.out.outputs.sonar_organization }}
       sonar_project_key: ${{ steps.out.outputs.sonar_project_key }}
       version: ${{ steps.ver.outputs.version }}
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
       - name: Install PyYAML
         run: pip3 install --disable-pip-version-check --no-input pyyaml
+
       - name: Parse .github/params.yml
         id: out
         shell: bash
@@ -40,6 +50,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import os, yaml
+          
           path = ".github/params.yml"
           data = {}
           try:
@@ -47,48 +58,74 @@ jobs:
                   data = yaml.safe_load(f) or {}
           except FileNotFoundError:
               data = {}
+          
           ci = data.get("ci", {}) or {}
           files = data.get("files", {}) or {}
           qod = data.get("qodana", {}) or {}
           bump = data.get("bump", {}) or {}
           rel = data.get("release", {}) or {}
           docker = data.get("docker", {}) or {}
-          def w(k,v):
-              with open(os.environ["GITHUB_OUTPUT"], "a") as o: o.write(f"{k}={v}\n")
-          w("ci_java_version", ci.get("java-version","21"))
-          w("ci_distribution", ci.get("distribution","temurin"))
-          w("files_version", files.get("version","release.version"))
+          sonar = data.get("sonar", {}) or {}
+          
+          def w(k, v):
+              with open(os.environ["GITHUB_OUTPUT"], "a") as o:
+                  o.write(f"{k}={v}\n")
+          
+          # CI settings
+          w("ci_java_version", ci.get("java-version", "21"))
+          w("ci_distribution", ci.get("distribution", "temurin"))
+          w("files_version", files.get("version", "release.version"))
+          
+          # Qodana settings
           w("qodana_enabled", str(qod.get("enabled", False)).lower())
+          
+          # Bump settings
           w("bump_enabled", str(bump.get("enabled", True)).lower())
-          w("bump_base_branch", bump.get("base-branch","main"))
-          w("bump_label", bump.get("label","autobump"))
+          w("bump_base_branch", bump.get("base-branch", "main"))
+          w("bump_label", bump.get("label", "autobump"))
+          
+          # Release settings
           w("release_full_release", str(rel.get("full-release", False)).lower())
+          
+          # Docker settings
           w("docker_enabled", str(docker.get("enabled", False)).lower())
           w("docker_image_name", docker.get("image-name", ""))
           w("docker_registry", docker.get("registry", "ghcr.io"))
-          sonar = data.get("sonar", {}) or {}
+          w("docker_dockerfile", docker.get("dockerfile", "Dockerfile"))
+          
+          # SonarCloud settings
           w("sonar_enabled", str(sonar.get("enabled", False)).lower())
           w("sonar_organization", sonar.get("organization", ""))
           w("sonar_project_key", sonar.get("project-key", ""))
           PY
-      - name: Read version
+
+      - name: Read version from file
         id: ver
         shell: bash
         run: |
           file="${{ steps.out.outputs.files_version }}"
-          [[ -s "$file" ]] && echo "version=$(tr -d ' \r\n' < "$file")" >> "$GITHUB_OUTPUT" || echo "version=0.0.0" >> "$GITHUB_OUTPUT"
+          if [[ -s "$file" ]]; then
+            echo "version=$(tr -d ' \r\n' < "$file")" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0" >> "$GITHUB_OUTPUT"
+          fi
 
+  # ---------------------------------------------------------------------------
+  # 2. BUILD - Compile, Test, Coverage
+  # ---------------------------------------------------------------------------
   build:
+    name: 🔨 Build & Test
     needs: params
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Read schema version
+
+      - name: Check for schema.version file
         id: schema
         run: |
           if [ -f schema.version ]; then
@@ -97,6 +134,7 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
+
       - name: Generate GitHub App Token
         if: steps.schema.outputs.exists == 'true'
         id: app-token
@@ -105,6 +143,7 @@ jobs:
           app-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}
           repositories: fsamp-event-schema
+
       - name: Checkout event schema
         if: steps.schema.outputs.exists == 'true'
         uses: actions/checkout@v5
@@ -113,26 +152,31 @@ jobs:
           path: schema-repo
           ref: v${{ steps.schema.outputs.version }}
           token: ${{ steps.app-token.outputs.token }}
+
       - name: Setup schema directory
         if: steps.schema.outputs.exists == 'true'
         run: |
           mkdir -p schema
           cp schema-repo/event.schema.json schema/
           echo "✅ Schema v${{ steps.schema.outputs.version }} ready"
-      - name: Setup Java
+
+      - name: Setup Java ${{ needs.params.outputs.ci_java_version }}
         uses: actions/setup-java@v4
         with:
           distribution: ${{ needs.params.outputs.ci_distribution }}
           java-version: ${{ needs.params.outputs.ci_java_version }}
           cache: maven
+
       - name: Read revision
         id: rev
         run: |
           file="${{ needs.params.outputs.files_version }}"
           [[ -s "$file" ]] && echo "rev=$(tr -d ' \r\n' < "$file")" >> "$GITHUB_OUTPUT" || echo "rev=0.0.0" >> "$GITHUB_OUTPUT"
-      - name: Build with Maven and JaCoCo coverage
+
+      - name: Build with Maven (compile, test, coverage)
         run: mvn -B -ntp -Drevision="${{ steps.rev.outputs.rev }}" verify
-      - name: Upload JaCoCo coverage artifact
+
+      - name: Upload JaCoCo coverage report
         uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -141,85 +185,187 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
 
+  # ---------------------------------------------------------------------------
+  # 3. SONAR - Code Quality Analysis
+  # ---------------------------------------------------------------------------
   sonar:
+    name: 📊 SonarCloud Analysis
     needs: [ params, build ]
     if: needs.params.outputs.sonar_enabled == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Setup Java
+
+      - name: Setup Java ${{ needs.params.outputs.ci_java_version }}
         uses: actions/setup-java@v4
         with:
           distribution: ${{ needs.params.outputs.ci_distribution }}
           java-version: ${{ needs.params.outputs.ci_java_version }}
           cache: maven
+
       - name: Download JaCoCo coverage
         uses: actions/download-artifact@v4
         with:
           name: jacoco-report
           path: target/site/jacoco
         continue-on-error: true
+
       - name: Read revision
         id: rev
         run: |
           file="${{ needs.params.outputs.files_version }}"
           [[ -s "$file" ]] && echo "rev=$(tr -d ' \r\n' < "$file")" >> "$GITHUB_OUTPUT" || echo "rev=0.0.0" >> "$GITHUB_OUTPUT"
-      - name: SonarCloud Scan
+
+      - name: Build and analyze with SonarCloud
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           mvn -B -ntp -Drevision="${{ steps.rev.outputs.rev }}" \
+            verify -DskipTests \
             org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
             -Dsonar.organization=${{ needs.params.outputs.sonar_organization }} \
             -Dsonar.projectKey=${{ needs.params.outputs.sonar_project_key }} \
-            -Dsonar.host.url=https://sonarcloud.io
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
 
+  # ---------------------------------------------------------------------------
+  # 4. QODANA - JetBrains Static Analysis (PR only)
+  # ---------------------------------------------------------------------------
   qodana:
+    name: 🔍 Qodana Analysis
     needs: [ params, build ]
-    if: needs.params.outputs.qodana_enabled == 'true' && github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    if: |
+      needs.params.outputs.qodana_enabled == 'true' && 
+      github.event_name == 'pull_request' && 
+      github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
       checks: write
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Qodana
+
+      - name: Run Qodana scan
         uses: pauszek/fsamp-code-ci/.github/actions/qodana-scan@main
         with:
           qodana-token: ${{ secrets.QODANA_TOKEN }}
           post-pr-comment: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
 
-  docker:
+  # ---------------------------------------------------------------------------
+  # 5. DOCKER BUILD - Build Container Image
+  # ---------------------------------------------------------------------------
+  docker-build:
+    name: 🐳 Build Docker Image
     needs: [ params, build ]
     if: needs.params.outputs.docker_enabled == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      security-events: write
-      actions: read
+    outputs:
+      scan-tag: ${{ steps.docker.outputs.scan-tag }}
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Docker Build and Push
+
+      - name: Build Docker image
+        id: docker
         uses: pauszek/fsamp-code-ci/.github/actions/docker-build@main
         with:
           image-name: ${{ needs.params.outputs.docker_image_name }}
+          dockerfile: ${{ needs.params.outputs.docker_dockerfile }}
           version: ${{ needs.params.outputs.version }}
           registry: ${{ needs.params.outputs.docker_registry }}
-          push: ${{ github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch }}
+          push: 'false'  # Don't push yet - wait for security scan
 
-  tag_and_release:
+      - name: Save Docker image for scanning
+        run: |
+          docker save ${{ needs.params.outputs.docker_image_name }}:scan | gzip > docker-image.tar.gz
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: docker-image.tar.gz
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # 6. SECURITY SCAN - Vulnerability Scanning (Trivy)
+  # ---------------------------------------------------------------------------
+  security-scan:
+    name: 🔒 Security Scan
+    needs: [ params, docker-build ]
+    if: needs.params.outputs.docker_enabled == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load Docker image
+        run: |
+          gunzip -c docker-image.tar.gz | docker load
+
+      - name: Run security scan
+        uses: pauszek/fsamp-code-ci/.github/actions/security-scan@main
+        with:
+          image-ref: ${{ needs.params.outputs.docker_image_name }}:scan
+          severity: 'CRITICAL,HIGH'
+          fail-on-vuln: 'true'
+          upload-sarif: 'false'  # Requires GitHub Advanced Security for private repos
+
+  # ---------------------------------------------------------------------------
+  # 7. DOCKER PUSH - Push to Registry (after security passes)
+  # ---------------------------------------------------------------------------
+  docker-push:
+    name: 📦 Push to Registry
+    needs: [ params, build, docker-build, security-scan ]
+    if: |
+      needs.params.outputs.docker_enabled == 'true' && 
+      github.event_name == 'push' && 
+      github.ref_name == needs.params.outputs.bump_base_branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Build and push Docker image
+        uses: pauszek/fsamp-code-ci/.github/actions/docker-build@main
+        with:
+          image-name: ${{ needs.params.outputs.docker_image_name }}
+          dockerfile: ${{ needs.params.outputs.docker_dockerfile }}
+          version: ${{ needs.params.outputs.version }}
+          registry: ${{ needs.params.outputs.docker_registry }}
+          push: 'true'
+
+  # ---------------------------------------------------------------------------
+  # 8. TAG & RELEASE - Create Git Tag and GitHub Release
+  # ---------------------------------------------------------------------------
+  tag-release:
+    name: 🏷️ Tag & Release
     needs: [ params, build ]
     if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
     runs-on: ubuntu-latest
@@ -228,7 +374,7 @@ jobs:
     outputs:
       full_release: ${{ steps.cfg.outputs.full_release }}
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -242,25 +388,34 @@ jobs:
           set -euo pipefail
           echo "full_release=${FULL:-false}" >> "$GITHUB_OUTPUT"
 
-      - name: Tag and (pre)-release
+      - name: Create tag and release
         uses: pauszek/fsamp-code-ci/.github/actions/tag-and-release@main
         with:
           version-file: ${{ needs.params.outputs.files_version }}
           full_release: ${{ steps.cfg.outputs.full_release }}
           tag-prefix: v
 
+  # ---------------------------------------------------------------------------
+  # 9. BUMP - Auto-bump Version via PR
+  # ---------------------------------------------------------------------------
   bump:
-    needs: [ params, build, tag_and_release ]
-    if: needs.params.outputs.bump_enabled == 'true' && github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch && needs.tag_and_release.result == 'success'
+    name: 🔄 Bump Version
+    needs: [ params, build, tag-release ]
+    if: |
+      needs.params.outputs.bump_enabled == 'true' && 
+      github.event_name == 'push' && 
+      github.ref_name == needs.params.outputs.bump_base_branch && 
+      needs.tag-release.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
       - name: Bump release.version via PR
         uses: pauszek/fsamp-code-ci/.github/actions/bump-release-version@main
         with:
