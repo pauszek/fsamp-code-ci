@@ -120,15 +120,6 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - name: Set up JDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: ${{ needs.params.outputs.ci_distribution }}
-          java-version: ${{ needs.params.outputs.ci_java_version }}
-          cache: maven
-      - name: Build JAR for Docker
-        run: |
-          mvn -B -ntp -Drevision=${{ needs.params.outputs.version }} package -DskipTests
       - name: Docker Build and Push
         uses: pauszek/fsamp-code-ci/.github/actions/docker-build@main
         with:
