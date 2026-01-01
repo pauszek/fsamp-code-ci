@@ -81,6 +81,36 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - name: Read schema version
+        id: schema
+        run: |
+          if [ -f schema.version ]; then
+            echo "version=$(tr -d '[:space:]' < schema.version)" >> "$GITHUB_OUTPUT"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Generate GitHub App Token
+        if: steps.schema.outputs.exists == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.GABRBA_APPID }}
+          private-key: ${{ secrets.GABRBA_SECRET }}
+      - name: Checkout event schema
+        if: steps.schema.outputs.exists == 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: pauszek/fsamp-event-schema
+          path: schema-repo
+          ref: v${{ steps.schema.outputs.version }}
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Setup schema directory
+        if: steps.schema.outputs.exists == 'true'
+        run: |
+          mkdir -p schema
+          cp schema-repo/event.schema.json schema/
+          echo "✅ Schema v${{ steps.schema.outputs.version }} ready"
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
