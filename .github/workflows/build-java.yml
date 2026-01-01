@@ -22,6 +22,9 @@ jobs:
       docker_enabled: ${{ steps.out.outputs.docker_enabled }}
       docker_image_name: ${{ steps.out.outputs.docker_image_name }}
       docker_registry: ${{ steps.out.outputs.docker_registry }}
+      sonar_enabled: ${{ steps.out.outputs.sonar_enabled }}
+      sonar_organization: ${{ steps.out.outputs.sonar_organization }}
+      sonar_project_key: ${{ steps.out.outputs.sonar_project_key }}
       version: ${{ steps.ver.outputs.version }}
     steps:
       - name: Checkout
@@ -63,6 +66,10 @@ jobs:
           w("docker_enabled", str(docker.get("enabled", False)).lower())
           w("docker_image_name", docker.get("image-name", ""))
           w("docker_registry", docker.get("registry", "ghcr.io"))
+          sonar = data.get("sonar", {}) or {}
+          w("sonar_enabled", str(sonar.get("enabled", False)).lower())
+          w("sonar_organization", sonar.get("organization", ""))
+          w("sonar_project_key", sonar.get("project-key", ""))
           PY
       - name: Read version
         id: ver
@@ -112,12 +119,64 @@ jobs:
           mkdir -p schema
           cp schema-repo/event.schema.json schema/
           echo "✅ Schema v${{ steps.schema.outputs.version }} ready"
-      - name: Maven Build
-        uses: pauszek/fsamp-code-ci/.github/actions/maven-build@main
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
-          java-version: ${{ needs.params.outputs.ci_java_version }}
           distribution: ${{ needs.params.outputs.ci_distribution }}
-          revision-file: ${{ needs.params.outputs.files_version }}
+          java-version: ${{ needs.params.outputs.ci_java_version }}
+          cache: maven
+      - name: Read revision
+        id: rev
+        run: |
+          file="${{ needs.params.outputs.files_version }}"
+          [[ -s "$file" ]] && echo "rev=$(tr -d ' \r\n' < "$file")" >> "$GITHUB_OUTPUT" || echo "rev=0.0.0" >> "$GITHUB_OUTPUT"
+      - name: Build with Maven and JaCoCo coverage
+        run: mvn -B -ntp -Drevision="${{ steps.rev.outputs.rev }}" verify
+      - name: Upload JaCoCo coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jacoco-report
+          path: target/site/jacoco/jacoco.xml
+          retention-days: 1
+          if-no-files-found: ignore
+
+  sonar:
+    needs: [ params, build ]
+    if: needs.params.outputs.sonar_enabled == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: ${{ needs.params.outputs.ci_distribution }}
+          java-version: ${{ needs.params.outputs.ci_java_version }}
+          cache: maven
+      - name: Download JaCoCo coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: jacoco-report
+          path: target/site/jacoco
+        continue-on-error: true
+      - name: Read revision
+        id: rev
+        run: |
+          file="${{ needs.params.outputs.files_version }}"
+          [[ -s "$file" ]] && echo "rev=$(tr -d ' \r\n' < "$file")" >> "$GITHUB_OUTPUT" || echo "rev=0.0.0" >> "$GITHUB_OUTPUT"
+      - name: SonarCloud Scan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          mvn -B -ntp -Drevision="${{ steps.rev.outputs.rev }}" \
+            org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+            -Dsonar.organization=${{ needs.params.outputs.sonar_organization }} \
+            -Dsonar.projectKey=${{ needs.params.outputs.sonar_project_key }} \
+            -Dsonar.host.url=https://sonarcloud.io
 
   qodana:
     needs: [ params, build ]
@@ -146,6 +205,7 @@ jobs:
       contents: read
       packages: write
       security-events: write
+      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@v5
