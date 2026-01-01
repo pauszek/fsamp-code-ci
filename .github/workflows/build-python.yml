@@ -97,6 +97,7 @@ jobs:
         with:
           app-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}
+          repositories: fsamp-event-schema
       - name: Checkout event schema
         if: steps.schema.outputs.exists == 'true'
         uses: actions/checkout@v5
