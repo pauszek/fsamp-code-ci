@@ -18,6 +18,11 @@ jobs:
       bump_base_branch: ${{ steps.out.outputs.bump_base_branch }}
       bump_label: ${{ steps.out.outputs.bump_label }}
       release_full_release: ${{ steps.out.outputs.release_full_release }}
+      docker_enabled: ${{ steps.out.outputs.docker_enabled }}
+      docker_image_name: ${{ steps.out.outputs.docker_image_name }}
+      docker_registry: ${{ steps.out.outputs.docker_registry }}
+      docker_dockerfile: ${{ steps.out.outputs.docker_dockerfile }}
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -44,6 +49,7 @@ jobs:
           qod = data.get("qodana", {}) or {}
           bump = data.get("bump", {}) or {}
           rel = data.get("release", {}) or {}
+          docker = data.get("docker", {}) or {}
           def w(k,v):
               with open(os.environ["GITHUB_OUTPUT"], "a") as o: o.write(f"{k}={v}\n")
           w("ci_python_version", ci.get("python-version","3.11"))
@@ -53,7 +59,17 @@ jobs:
           w("bump_base_branch", bump.get("base-branch","main"))
           w("bump_label", bump.get("label","autobump"))
           w("release_full_release", str(rel.get("full-release", False)).lower())
+          w("docker_enabled", str(docker.get("enabled", False)).lower())
+          w("docker_image_name", docker.get("image-name", ""))
+          w("docker_registry", docker.get("registry", "ghcr.io"))
+          w("docker_dockerfile", docker.get("dockerfile", "Dockerfile"))
           PY
+      - name: Read version
+        id: ver
+        shell: bash
+        run: |
+          file="${{ steps.out.outputs.files_version }}"
+          [[ -s "$file" ]] && echo "version=$(tr -d ' \r\n' < "$file")" >> "$GITHUB_OUTPUT" || echo "version=0.0.0" >> "$GITHUB_OUTPUT"
 
   build:
     needs: params
@@ -71,9 +87,22 @@ jobs:
           python-version: ${{ needs.params.outputs.ci_python_version }}
           cache: 'pip'
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+      - name: Run linting with ruff
+        run: |
+          pip install ruff
+          ruff check src/ tests/ --output-format=github || true
       - name: Run tests with pytest
-        run: pytest
+        run: pytest --cov=src --cov-report=xml --cov-report=term-missing
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
 
   qodana:
     needs: [ params, build ]
@@ -93,6 +122,28 @@ jobs:
         with:
           qodana-token: ${{ secrets.QODANA_TOKEN }}
           post-pr-comment: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+
+  docker:
+    needs: [ params, build ]
+    if: needs.params.outputs.docker_enabled == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Docker Build and Push
+        uses: pauszek/fsamp-code-ci/.github/actions/docker-build@main
+        with:
+          image-name: ${{ needs.params.outputs.docker_image_name }}
+          dockerfile: ${{ needs.params.outputs.docker_dockerfile }}
+          version: ${{ needs.params.outputs.version }}
+          registry: ${{ needs.params.outputs.docker_registry }}
+          push: ${{ github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch }}
 
   tag_and_release:
     needs: [ params, build ]
