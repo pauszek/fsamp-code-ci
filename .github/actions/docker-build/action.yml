@@ -1,11 +1,17 @@
 # =============================================================================
-# Docker Build and Push Action
+# Docker Build Action
 # =============================================================================
-# Builds Docker image with multi-platform support and pushes to ECR/GHCR.
-# Includes security scanning with Trivy.
+# Builds Docker image with multi-platform support.
+# Security scanning is handled by a separate job for better separation of concerns.
+#
+# Features:
+#   - Multi-platform builds (amd64, arm64)
+#   - GitHub Container Registry (GHCR) support
+#   - Build caching via GitHub Actions cache
+#   - SBOM and provenance attestation
 # =============================================================================
-name: Docker Build and Push
-description: Build, scan, and push Docker image to registry
+name: Docker Build
+description: Build Docker image and optionally push to registry
 
 inputs:
   image-name:
@@ -34,14 +40,6 @@ inputs:
     description: 'Target platforms for multi-arch build'
     required: false
     default: 'linux/amd64,linux/arm64'
-  scan-severity:
-    description: 'Trivy scan severity threshold'
-    required: false
-    default: 'CRITICAL,HIGH'
-  scan-exit-code:
-    description: 'Exit code on vulnerability found'
-    required: false
-    default: '1'
   build-args:
     description: 'Docker build arguments'
     required: false
@@ -54,16 +52,25 @@ outputs:
   digest:
     description: 'Image digest'
     value: ${{ steps.build.outputs.digest }}
+  scan-tag:
+    description: 'Local image tag for scanning'
+    value: ${{ inputs.image-name }}:scan
 
 runs:
   using: composite
   steps:
-    - name: Set up QEMU
+    # -------------------------------------------------------------------------
+    # Setup Docker Build Environment
+    # -------------------------------------------------------------------------
+    - name: Set up QEMU (for multi-arch builds)
       uses: docker/setup-qemu-action@v3
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
+    # -------------------------------------------------------------------------
+    # Registry Authentication
+    # -------------------------------------------------------------------------
     - name: Log in to GitHub Container Registry
       if: inputs.registry == 'ghcr.io' && inputs.push == 'true'
       uses: docker/login-action@v3
@@ -72,7 +79,10 @@ runs:
         username: ${{ github.actor }}
         password: ${{ github.token }}
 
-    - name: Extract metadata
+    # -------------------------------------------------------------------------
+    # Image Metadata
+    # -------------------------------------------------------------------------
+    - name: Extract metadata for Docker
       id: meta
       uses: docker/metadata-action@v5
       with:
@@ -82,7 +92,10 @@ runs:
           type=raw,value=latest,enable={{is_default_branch}}
           type=sha,prefix=
 
-    - name: Build Docker image (for scanning)
+    # -------------------------------------------------------------------------
+    # Build Image (local - for scanning)
+    # -------------------------------------------------------------------------
+    - name: Build Docker image (local)
       uses: docker/build-push-action@v6
       with:
         context: ${{ inputs.context }}
@@ -95,23 +108,10 @@ runs:
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: '${{ inputs.image-name }}:scan'
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-        severity: ${{ inputs.scan-severity }}
-        exit-code: ${{ inputs.scan-exit-code }}
-
-    - name: Upload Trivy scan results to GitHub Security
-      uses: github/codeql-action/upload-sarif@v3
-      if: always()
-      continue-on-error: true  # Fails silently on private repos without GHAS, works on public repos
-      with:
-        sarif_file: 'trivy-results.sarif'
-
-    - name: Build and push
+    # -------------------------------------------------------------------------
+    # Build & Push to Registry
+    # -------------------------------------------------------------------------
+    - name: Build and push to registry
       id: build
       if: inputs.push == 'true'
       uses: docker/build-push-action@v6
