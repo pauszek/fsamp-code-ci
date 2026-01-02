@@ -1,6 +1,10 @@
 name: Repo CI (no build)
 on:
   workflow_call:
+    secrets:
+      GABRBA_SECRET:
+        description: GitHub App private key for bump PRs
+        required: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
