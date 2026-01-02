@@ -23,7 +23,7 @@ jobs:
       tf_working_directory: ${{ steps.out.outputs.tf_working_directory }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -67,7 +67,7 @@ jobs:
         working-directory: ${{ needs.params.outputs.tf_working_directory }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -117,7 +117,7 @@ jobs:
 
   tag_and_release:
     name: Tag and Release
-    needs: [params, terraform]
+    needs: [ params, terraform ]
     if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
     runs-on: ubuntu-latest
     permissions:
@@ -126,7 +126,7 @@ jobs:
       full_release: ${{ steps.cfg.outputs.full_release }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -148,7 +148,7 @@ jobs:
 
   bump:
     name: Bump Version
-    needs: [params, terraform, tag_and_release]
+    needs: [ params, terraform, tag_and_release ]
     if: needs.params.outputs.bump_enabled == 'true' && github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch && needs.tag_and_release.result == 'success'
     runs-on: ubuntu-latest
     permissions:
@@ -156,7 +156,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
