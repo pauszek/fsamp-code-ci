@@ -20,7 +20,6 @@ jobs:
     outputs:
       ci_python_version: ${{ steps.out.outputs.ci_python_version }}
       files_version: ${{ steps.out.outputs.files_version }}
-      qodana_enabled: ${{ steps.out.outputs.qodana_enabled }}
       bump_enabled: ${{ steps.out.outputs.bump_enabled }}
       bump_base_branch: ${{ steps.out.outputs.bump_base_branch }}
       bump_label: ${{ steps.out.outputs.bump_label }}
@@ -60,7 +59,6 @@ jobs:
           
           ci = data.get("ci", {}) or {}
           files = data.get("files", {}) or {}
-          qod = data.get("qodana", {}) or {}
           bump = data.get("bump", {}) or {}
           rel = data.get("release", {}) or {}
           docker = data.get("docker", {}) or {}
@@ -73,9 +71,6 @@ jobs:
           # CI settings
           w("ci_python_version", ci.get("python-version", "3.11"))
           w("files_version", files.get("version", "release.version"))
-          
-          # Qodana settings
-          w("qodana_enabled", str(qod.get("enabled", False)).lower())
           
           # Bump settings
           w("bump_enabled", str(bump.get("enabled", True)).lower())
@@ -227,34 +222,7 @@ jobs:
             -Dsonar.python.version=${{ needs.params.outputs.ci_python_version }}
 
   # ---------------------------------------------------------------------------
-  # 4. QODANA - JetBrains Static Analysis (PR only)
-  # ---------------------------------------------------------------------------
-  qodana:
-    name: 🔍 Qodana Analysis
-    needs: [ params, build ]
-    if: |
-      needs.params.outputs.qodana_enabled == 'true' && 
-      github.event_name == 'pull_request' && 
-      github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-      checks: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Run Qodana scan
-        uses: pauszek/fsamp-code-ci/.github/actions/qodana-scan@main
-        with:
-          qodana-token: ${{ secrets.QODANA_TOKEN }}
-          post-pr-comment: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
-
-  # ---------------------------------------------------------------------------
-  # 5. DOCKER BUILD - Build Container Image
+  # 4. DOCKER BUILD - Build Container Image
   # ---------------------------------------------------------------------------
   docker-build:
     name: 🐳 Build Docker Image
