@@ -81,19 +81,35 @@ jobs:
 
       - name: Terraform Init (validation only)
         run: |
-          for env in environments/*/; do
-            echo "::group::Init $env"
-            terraform -chdir="$env" init -backend=false
+          # Check if environments subdirectories exist
+          if compgen -G "environments/*/" > /dev/null 2>&1; then
+            for env in environments/*/; do
+              echo "::group::Init $env"
+              terraform -chdir="$env" init -backend=false
+              echo "::endgroup::"
+            done
+          else
+            # Single root terraform configuration
+            echo "::group::Init root"
+            terraform init -backend=false
             echo "::endgroup::"
-          done
+          fi
 
       - name: Terraform Validate
         run: |
-          for env in environments/*/; do
-            echo "::group::Validate $env"
-            terraform -chdir="$env" validate
+          # Check if environments subdirectories exist
+          if compgen -G "environments/*/" > /dev/null 2>&1; then
+            for env in environments/*/; do
+              echo "::group::Validate $env"
+              terraform -chdir="$env" validate
+              echo "::endgroup::"
+            done
+          else
+            # Single root terraform configuration
+            echo "::group::Validate root"
+            terraform validate
             echo "::endgroup::"
-          done
+          fi
 
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v4
