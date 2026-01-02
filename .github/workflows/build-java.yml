@@ -314,15 +314,173 @@ jobs:
           upload-sarif: 'false'  # Requires GitHub Advanced Security for private repos
 
   # ---------------------------------------------------------------------------
-  # 7. DOCKER PUSH - Push to Registry (after security passes)
+  # 6b. E2E TESTS (PR) - Integration Tests on Pull Request
+  # ---------------------------------------------------------------------------
+  e2e-tests-pr:
+    name: 🧪 E2E Tests (PR)
+    needs: [ params, security-scan ]
+    if: |
+      needs.params.outputs.docker_enabled == 'true' && 
+      github.event_name == 'pull_request' &&
+      needs.security-scan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    env:
+      LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+      
+    steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.GABRBA_APPID }}
+          private-key: ${{ secrets.GABRBA_SECRET }}
+          repositories: fsamp-infra,fsamp-gateway,fsamp-processor
+
+      - name: Checkout fsamp-infra (E2E infrastructure)
+        uses: actions/checkout@v5
+        with:
+          repository: pauszek/fsamp-infra
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+          path: infra
+
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load Docker image
+        id: load-image
+        run: |
+          gunzip -c docker-image.tar.gz | docker load
+          # Tag the image for E2E use
+          IMAGE_NAME="${{ needs.params.outputs.docker_image_name }}"
+          docker tag "${IMAGE_NAME}:scan" "${IMAGE_NAME}:pr-${{ github.event.pull_request.number }}"
+          echo "this_image=${IMAGE_NAME}:pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve E2E test images
+        id: images
+        run: |
+          IMAGE_NAME="${{ needs.params.outputs.docker_image_name }}"
+          REGISTRY="${{ needs.params.outputs.docker_registry }}"
+          OWNER="${{ github.repository_owner }}"
+          COMPAT_FILE="infra/compatibility.yml"
+          THIS_IMAGE="${{ steps.load-image.outputs.this_image }}"
+          
+          echo "═══════════════════════════════════════════════════════"
+          echo "📋 Resolving E2E Test Images (PR)"
+          echo "═══════════════════════════════════════════════════════"
+          
+          CURRENT_GATEWAY=$(yq '.current.gateway' "$COMPAT_FILE")
+          CURRENT_PROCESSOR=$(yq '.current.processor' "$COMPAT_FILE")
+          
+          echo "Compatibility Matrix - Current Stable Versions:"
+          echo "  Gateway:   ${CURRENT_GATEWAY}"
+          echo "  Processor: ${CURRENT_PROCESSOR}"
+          echo ""
+          
+          if [[ "$IMAGE_NAME" == *"gateway"* ]]; then
+            GATEWAY_IMAGE="$THIS_IMAGE"
+            PROCESSOR_IMAGE="${REGISTRY}/${OWNER}/fsamp-processor:${CURRENT_PROCESSOR}"
+            echo "🔨 Testing: Gateway (from PR)"
+            echo "📦 This PR:        ${GATEWAY_IMAGE}"
+            echo "📦 Counterpart:    ${PROCESSOR_IMAGE} (from compatibility matrix)"
+          elif [[ "$IMAGE_NAME" == *"processor"* ]]; then
+            GATEWAY_IMAGE="${REGISTRY}/${OWNER}/fsamp-gateway:${CURRENT_GATEWAY}"
+            PROCESSOR_IMAGE="$THIS_IMAGE"
+            echo "🔨 Testing: Processor (from PR)"
+            echo "📦 Counterpart:    ${GATEWAY_IMAGE} (from compatibility matrix)"
+            echo "📦 This PR:        ${PROCESSOR_IMAGE}"
+          else
+            echo "❌ Unknown service: $IMAGE_NAME"
+            exit 1
+          fi
+          
+          echo "gateway_image=${GATEWAY_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "processor_image=${PROCESSOR_IMAGE}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull counterpart image
+        run: |
+          IMAGE_NAME="${{ needs.params.outputs.docker_image_name }}"
+          if [[ "$IMAGE_NAME" == *"gateway"* ]]; then
+            echo "Pulling Processor: ${{ steps.images.outputs.processor_image }}"
+            docker pull "${{ steps.images.outputs.processor_image }}"
+          else
+            echo "Pulling Gateway: ${{ steps.images.outputs.gateway_image }}"
+            docker pull "${{ steps.images.outputs.gateway_image }}"
+          fi
+
+      - name: Start LocalStack
+        working-directory: infra/e2e
+        run: |
+          docker compose up -d localstack
+          echo "Waiting for LocalStack initialization..."
+          timeout 180 bash -c 'until docker exec fsamp-e2e-localstack test -f /tmp/localstack-config/fsamp-config.env 2>/dev/null; do sleep 5; done'
+          echo "✅ LocalStack initialized"
+
+      - name: Start application containers
+        working-directory: infra/e2e
+        env:
+          GATEWAY_IMAGE: ${{ steps.images.outputs.gateway_image }}
+          PROCESSOR_IMAGE: ${{ steps.images.outputs.processor_image }}
+        run: |
+          docker compose up -d gateway processor
+          echo "Waiting for Gateway..."
+          timeout 120 bash -c 'until curl -sf http://localhost:8080/actuator/health; do sleep 5; done'
+          echo "✅ Gateway healthy"
+          sleep 10
+          echo "✅ Processor started"
+
+      - name: Run E2E tests
+        working-directory: infra/e2e
+        env:
+          GATEWAY_IMAGE: ${{ steps.images.outputs.gateway_image }}
+          PROCESSOR_IMAGE: ${{ steps.images.outputs.processor_image }}
+        run: |
+          docker compose --profile test up --exit-code-from e2e-tests e2e-tests
+
+      - name: Collect logs on failure
+        if: failure()
+        working-directory: infra/e2e
+        run: |
+          echo "═══════════════════════════════════════════════════════"
+          echo "📋 E2E Test Failure - Collecting Logs"
+          echo "═══════════════════════════════════════════════════════"
+          echo "=== LocalStack ===" 
+          docker logs fsamp-e2e-localstack 2>&1 | tail -100 || true
+          echo "=== Gateway ==="
+          docker logs fsamp-e2e-gateway 2>&1 | tail -100 || true
+          echo "=== Processor ==="
+          docker logs fsamp-e2e-processor 2>&1 | tail -100 || true
+
+      - name: Cleanup
+        if: always()
+        working-directory: infra/e2e
+        run: |
+          docker compose down -v --remove-orphans || true
+
+  # ---------------------------------------------------------------------------
+  # 7. DOCKER PUSH - Push to Registry (after security passes and E2E on PR)
   # ---------------------------------------------------------------------------
   docker-push:
     name: 📦 Push to Registry
-    needs: [ params, build, docker-build, security-scan ]
+    needs: [ params, build, docker-build, security-scan, e2e-tests-pr ]
     if: |
+      always() &&
       needs.params.outputs.docker_enabled == 'true' && 
       github.event_name == 'push' && 
-      github.ref_name == needs.params.outputs.bump_base_branch
+      github.ref_name == needs.params.outputs.bump_base_branch &&
+      needs.security-scan.result == 'success' &&
+      (needs.e2e-tests-pr.result == 'success' || needs.e2e-tests-pr.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read
