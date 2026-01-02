@@ -178,8 +178,11 @@ jobs:
           file="${{ needs.params.outputs.files_version }}"
           [[ -s "$file" ]] && echo "rev=$(tr -d ' \r\n' < "$file")" >> "$GITHUB_OUTPUT" || echo "rev=0.0.0" >> "$GITHUB_OUTPUT"
 
-      - name: Build with Maven (compile, test, coverage)
-        run: mvn -B -ntp -Drevision="${{ steps.rev.outputs.rev }}" verify
+      - name: Build with Maven (compile, unit tests, coverage)
+        run: mvn -B -ntp -Drevision="${{ steps.rev.outputs.rev }}" test
+
+      - name: Run integration tests with LocalStack (Testcontainers)
+        run: mvn -B -ntp -Drevision="${{ steps.rev.outputs.rev }}" failsafe:integration-test failsafe:verify
 
       - name: Upload JaCoCo coverage report
         uses: actions/upload-artifact@v4
