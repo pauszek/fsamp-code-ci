@@ -9,6 +9,9 @@ on:
       GABRBA_SECRET:
         description: GitHub App private key for bump PRs
         required: false
+      LOCALSTACK_AUTH_TOKEN:
+        description: LocalStack Pro token for E2E tests
+        required: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -175,8 +178,11 @@ jobs:
           file="${{ needs.params.outputs.files_version }}"
           [[ -s "$file" ]] && echo "rev=$(tr -d ' \r\n' < "$file")" >> "$GITHUB_OUTPUT" || echo "rev=0.0.0" >> "$GITHUB_OUTPUT"
 
-      - name: Build with Maven (compile, test, coverage)
-        run: mvn -B -ntp -Drevision="${{ steps.rev.outputs.rev }}" verify
+      - name: Build with Maven (compile, unit tests, coverage)
+        run: mvn -B -ntp -Drevision="${{ steps.rev.outputs.rev }}" test
+
+      - name: Run integration tests with LocalStack (Testcontainers)
+        run: mvn -B -ntp -Drevision="${{ steps.rev.outputs.rev }}" failsafe:integration-test failsafe:verify
 
       - name: Upload JaCoCo coverage report
         uses: actions/upload-artifact@v4
@@ -321,6 +327,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      image: ${{ steps.push.outputs.image }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -328,6 +336,7 @@ jobs:
           fetch-depth: 0
 
       - name: Build and push Docker image
+        id: push
         uses: pauszek/fsamp-code-ci/.github/actions/docker-build@main
         with:
           image-name: ${{ needs.params.outputs.docker_image_name }}
@@ -371,6 +380,44 @@ jobs:
           tag-prefix: v
 
   # ---------------------------------------------------------------------------
+  # 8b. UPDATE COMPATIBILITY - Notify fsamp-infra of new version
+  # ---------------------------------------------------------------------------
+  update-compatibility:
+    name: 📋 Update Compatibility Matrix
+    needs: [ params, tag-release ]
+    if: |
+      needs.params.outputs.docker_enabled == 'true' && 
+      github.event_name == 'push' && 
+      github.ref_name == needs.params.outputs.bump_base_branch &&
+      needs.tag-release.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine service name
+        id: service
+        run: |
+          IMAGE_NAME="${{ needs.params.outputs.docker_image_name }}"
+          if [[ "$IMAGE_NAME" == *"gateway"* ]]; then
+            echo "name=gateway" >> "$GITHUB_OUTPUT"
+          elif [[ "$IMAGE_NAME" == *"processor"* ]]; then
+            echo "name=processor" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=unknown" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Notify fsamp-infra to update compatibility matrix
+        if: steps.service.outputs.name != 'unknown'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.GABRBA_SECRET }}
+          repository: pauszek/fsamp-infra
+          event-type: update-compatibility
+          client-payload: |
+            {
+              "service": "${{ steps.service.outputs.name }}",
+              "version": "${{ needs.params.outputs.version }}"
+            }
+
+  # ---------------------------------------------------------------------------
   # 9. BUMP - Auto-bump Version via PR
   # ---------------------------------------------------------------------------
   bump:
@@ -399,3 +446,184 @@ jobs:
           version-file: ${{ needs.params.outputs.files_version }}
           base-branch: ${{ needs.params.outputs.bump_base_branch }}
           label: ${{ needs.params.outputs.bump_label }}
+
+  # ---------------------------------------------------------------------------
+  # 10. E2E TESTS - Full Stack Integration Tests (after push)
+  # ---------------------------------------------------------------------------
+  e2e-tests:
+    name: 🧪 E2E Integration Tests
+    needs: [ params, docker-push ]
+    if: |
+      needs.params.outputs.docker_enabled == 'true' && 
+      github.event_name == 'push' && 
+      github.ref_name == needs.params.outputs.bump_base_branch &&
+      needs.docker-push.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    env:
+      LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+      THIS_IMAGE: ${{ needs.params.outputs.docker_registry }}/${{ github.repository_owner }}/${{ needs.params.outputs.docker_image_name }}:${{ needs.params.outputs.version }}
+      
+    steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.GABRBA_APPID }}
+          private-key: ${{ secrets.GABRBA_SECRET }}
+          repositories: fsamp-infra,fsamp-gateway,fsamp-processor
+
+      - name: Checkout fsamp-infra (E2E infrastructure)
+        uses: actions/checkout@v5
+        with:
+          repository: pauszek/fsamp-infra
+          path: infra
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Install yq for YAML parsing
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Resolve counterpart image from Compatibility Matrix
+        id: images
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          
+          IMAGE_NAME="${{ needs.params.outputs.docker_image_name }}"
+          REGISTRY="${{ needs.params.outputs.docker_registry }}"
+          OWNER="${{ github.repository_owner }}"
+          COMPAT_FILE="infra/compatibility.yml"
+          
+          echo "═══════════════════════════════════════════════════════"
+          echo "📋 Resolving E2E Test Images"
+          echo "═══════════════════════════════════════════════════════"
+          
+          # Read current stable versions from compatibility matrix
+          CURRENT_GATEWAY=$(yq '.current.gateway' "$COMPAT_FILE")
+          CURRENT_PROCESSOR=$(yq '.current.processor' "$COMPAT_FILE")
+          
+          echo "Compatibility Matrix - Current Stable Versions:"
+          echo "  Gateway:   ${CURRENT_GATEWAY}"
+          echo "  Processor: ${CURRENT_PROCESSOR}"
+          echo ""
+          
+          if [[ "$IMAGE_NAME" == *"gateway"* ]]; then
+            # This is Gateway build - use just-built Gateway + stable Processor
+            GATEWAY_IMAGE="$THIS_IMAGE"
+            PROCESSOR_IMAGE="${REGISTRY}/${OWNER}/fsamp-processor:${CURRENT_PROCESSOR}"
+            
+            echo "🔨 Building: Gateway"
+            echo "📦 This build:     ${GATEWAY_IMAGE}"
+            echo "📦 Counterpart:    ${PROCESSOR_IMAGE} (from compatibility matrix)"
+            
+          elif [[ "$IMAGE_NAME" == *"processor"* ]]; then
+            # This is Processor build - use stable Gateway + just-built Processor
+            GATEWAY_IMAGE="${REGISTRY}/${OWNER}/fsamp-gateway:${CURRENT_GATEWAY}"
+            PROCESSOR_IMAGE="$THIS_IMAGE"
+            
+            echo "🔨 Building: Processor"
+            echo "📦 Counterpart:    ${GATEWAY_IMAGE} (from compatibility matrix)"
+            echo "📦 This build:     ${PROCESSOR_IMAGE}"
+            
+          else
+            echo "❌ Unknown service: $IMAGE_NAME"
+            exit 1
+          fi
+          
+          # Validate versions are not empty
+          if [[ -z "$GATEWAY_IMAGE" ]] || [[ -z "$PROCESSOR_IMAGE" ]]; then
+            echo "❌ ERROR: Could not resolve image versions"
+            exit 1
+          fi
+          
+          # Output
+          echo "gateway_image=${GATEWAY_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "processor_image=${PROCESSOR_IMAGE}" >> "$GITHUB_OUTPUT"
+          
+          echo ""
+          echo "═══════════════════════════════════════════════════════"
+
+      - name: Validate images (no latest allowed)
+        run: |
+          if [[ "${{ steps.images.outputs.gateway_image }}" == *":latest" ]] || \
+             [[ "${{ steps.images.outputs.processor_image }}" == *":latest" ]]; then
+            echo "❌ ERROR: 'latest' tag is forbidden in E2E tests"
+            exit 1
+          fi
+          echo "✅ Images validated - no 'latest' tags"
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull images
+        run: |
+          echo "Pulling Gateway: ${{ steps.images.outputs.gateway_image }}"
+          docker pull "${{ steps.images.outputs.gateway_image }}"
+          
+          echo "Pulling Processor: ${{ steps.images.outputs.processor_image }}"
+          docker pull "${{ steps.images.outputs.processor_image }}"
+
+      - name: Start LocalStack
+        working-directory: infra/e2e
+        run: |
+          docker compose up -d localstack
+          
+          echo "Waiting for LocalStack initialization..."
+          timeout 180 bash -c 'until docker exec fsamp-e2e-localstack test -f /tmp/localstack-config/fsamp-config.env 2>/dev/null; do sleep 5; done'
+          
+          echo "✅ LocalStack initialized"
+          docker exec fsamp-e2e-localstack cat /tmp/localstack-config/fsamp-config.env
+
+      - name: Start application containers
+        working-directory: infra/e2e
+        env:
+          GATEWAY_IMAGE: ${{ steps.images.outputs.gateway_image }}
+          PROCESSOR_IMAGE: ${{ steps.images.outputs.processor_image }}
+        run: |
+          docker compose up -d gateway processor
+          
+          echo "Waiting for Gateway..."
+          timeout 120 bash -c 'until curl -sf http://localhost:8080/actuator/health; do sleep 5; done'
+          echo "✅ Gateway healthy"
+          
+          sleep 10
+          echo "✅ Processor started"
+
+      - name: Run E2E tests
+        working-directory: infra/e2e
+        env:
+          GATEWAY_IMAGE: ${{ steps.images.outputs.gateway_image }}
+          PROCESSOR_IMAGE: ${{ steps.images.outputs.processor_image }}
+        run: |
+          docker compose --profile test up --exit-code-from e2e-tests e2e-tests
+
+      - name: Collect logs on failure
+        if: failure()
+        working-directory: infra/e2e
+        run: |
+          echo "═══════════════════════════════════════════════════════"
+          echo "📋 E2E Test Failure - Collecting Logs"
+          echo "═══════════════════════════════════════════════════════"
+          echo ""
+          echo "=== LocalStack ===" 
+          docker logs fsamp-e2e-localstack 2>&1 | tail -100 || true
+          echo ""
+          echo "=== Gateway ==="
+          docker logs fsamp-e2e-gateway 2>&1 | tail -100 || true
+          echo ""
+          echo "=== Processor ==="
+          docker logs fsamp-e2e-processor 2>&1 | tail -100 || true
+
+      - name: Cleanup
+        if: always()
+        working-directory: infra/e2e
+        run: |
+          docker compose down -v --remove-orphans || true

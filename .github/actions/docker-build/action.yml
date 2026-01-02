@@ -89,8 +89,6 @@ runs:
         images: ${{ inputs.registry }}/${{ github.repository_owner }}/${{ inputs.image-name }}
         tags: |
           type=raw,value=${{ inputs.version }}
-          type=raw,value=latest,enable={{is_default_branch}}
-          type=sha,prefix=
 
     # -------------------------------------------------------------------------
     # Build Image (local - for scanning)
