@@ -2,6 +2,13 @@ name: Build for Java Project
 
 on:
   workflow_call:
+    secrets:
+      SONAR_TOKEN:
+        description: SonarCloud authentication token
+        required: false
+      GABRBA_SECRET:
+        description: GitHub App private key for bump PRs
+        required: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
