@@ -639,8 +639,17 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: pauszek/fsamp-infra
+          ref: main
           path: infra
           token: ${{ steps.app-token.outputs.token }}
+
+      - name: Debug - verify checkout
+        run: |
+          echo "Checking infra directory contents:"
+          ls -la infra/ || echo "infra/ directory not found"
+          echo ""
+          echo "Looking for compatibility.yml:"
+          ls -la infra/compatibility.yml || echo "compatibility.yml not found"
 
       - name: Install yq for YAML parsing
         run: |
