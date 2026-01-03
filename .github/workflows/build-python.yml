@@ -320,7 +320,6 @@ jobs:
           image-name: ${{ needs.params.outputs.docker_image_name }}
           this-image: ${{ steps.load.outputs.this_image }}
           registry: ${{ needs.params.outputs.docker_registry }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           app-token: ${{ steps.app-token.outputs.token }}
           localstack-token: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
 
@@ -439,6 +438,5 @@ jobs:
           image-name: ${{ needs.params.outputs.docker_image_name }}
           this-image: ${{ needs.params.outputs.docker_registry }}/${{ github.repository_owner }}/${{ needs.params.outputs.docker_image_name }}:${{ needs.params.outputs.version }}
           registry: ${{ needs.params.outputs.docker_registry }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           app-token: ${{ steps.app-token.outputs.token }}
           localstack-token: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
