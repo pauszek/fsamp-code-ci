@@ -7,7 +7,7 @@ on:
         description: SonarCloud authentication token
         required: false
       GABRBA_SECRET:
-        description: GitHub App private key for bump PRs
+        description: GitHub App private key for cross-repo access
         required: false
       LOCALSTACK_AUTH_TOKEN:
         description: LocalStack Pro token for E2E tests
@@ -17,9 +17,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# =============================================================================
-# JOBS
-# =============================================================================
 jobs:
   # ---------------------------------------------------------------------------
   # 1. PARAMS - Load Configuration
@@ -49,23 +46,20 @@ jobs:
           fetch-depth: 0
 
       - name: Install PyYAML
-        run: pip3 install --disable-pip-version-check --no-input pyyaml
+        run: pip3 install --quiet --disable-pip-version-check pyyaml
 
       - name: Parse .github/params.yml
         id: out
-        shell: bash
         run: |
-          set -euo pipefail
           python3 - <<'PY'
           import os, yaml
           
-          path = ".github/params.yml"
           data = {}
           try:
-              with open(path) as f:
+              with open(".github/params.yml") as f:
                   data = yaml.safe_load(f) or {}
           except FileNotFoundError:
-              data = {}
+              pass
           
           ci = data.get("ci", {}) or {}
           files = data.get("files", {}) or {}
@@ -78,40 +72,26 @@ jobs:
               with open(os.environ["GITHUB_OUTPUT"], "a") as o:
                   o.write(f"{k}={v}\n")
           
-          # CI settings
           w("ci_python_version", ci.get("python-version", "3.11"))
           w("files_version", files.get("version", "release.version"))
-          
-          # Bump settings
           w("bump_enabled", str(bump.get("enabled", True)).lower())
           w("bump_base_branch", bump.get("base-branch", "main"))
           w("bump_label", bump.get("label", "autobump"))
-          
-          # Release settings
           w("release_full_release", str(rel.get("full-release", False)).lower())
-          
-          # Docker settings
           w("docker_enabled", str(docker.get("enabled", False)).lower())
           w("docker_image_name", docker.get("image-name", ""))
           w("docker_registry", docker.get("registry", "ghcr.io"))
           w("docker_dockerfile", docker.get("dockerfile", "Dockerfile"))
-          
-          # SonarCloud settings
           w("sonar_enabled", str(sonar.get("enabled", False)).lower())
           w("sonar_organization", sonar.get("organization", ""))
           w("sonar_project_key", sonar.get("project-key", ""))
           PY
 
-      - name: Read version from file
+      - name: Read version
         id: ver
-        shell: bash
         run: |
           file="${{ steps.out.outputs.files_version }}"
-          if [[ -s "$file" ]]; then
-            echo "version=$(tr -d ' \r\n' < "$file")" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=0.0.0" >> "$GITHUB_OUTPUT"
-          fi
+          [[ -s "$file" ]] && echo "version=$(tr -d ' \r\n' < "$file")" >> "$GITHUB_OUTPUT" || echo "version=0.0.0" >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
   # 2. BUILD - Lint, Test, Coverage
@@ -128,10 +108,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check for schema.version file
+      - name: Check for schema.version
         id: schema
         run: |
-          if [ -f schema.version ]; then
+          if [[ -f schema.version ]]; then
             echo "version=$(tr -d '[:space:]' < schema.version)" >> "$GITHUB_OUTPUT"
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
@@ -161,7 +141,6 @@ jobs:
         run: |
           mkdir -p schema
           cp schema-repo/event.schema.json schema/
-          echo "✅ Schema v${{ steps.schema.outputs.version }} ready"
 
       - name: Setup Python ${{ needs.params.outputs.ci_python_version }}
         uses: actions/setup-python@v5
@@ -173,30 +152,30 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          [[ -f requirements-dev.txt ]] && pip install -r requirements-dev.txt || true
           pip install -e .
 
-      - name: Run linting with Ruff
+      - name: Lint with Ruff
         run: |
           pip install ruff
           ruff check src/ tests/ --output-format=github
 
-      - name: Run unit tests with pytest + coverage
+      - name: Unit tests
         run: pytest -m "not integration" --cov=src --cov-report=xml --cov-report=term-missing
 
-      - name: Run integration tests with LocalStack
+      - name: Integration tests
         run: |
           pip install testcontainers[localstack]
-          pytest -m integration -v --tb=short || echo "⚠️ No integration tests found or Docker unavailable"
+          pytest -m integration -v --tb=short || echo "⚠️ No integration tests or Docker unavailable"
 
-      - name: Upload coverage artifact
+      - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: coverage.xml
           retention-days: 1
 
-      - name: Upload coverage to Codecov
+      - name: Codecov
         uses: codecov/codecov-action@v4
         if: always()
         with:
@@ -207,18 +186,16 @@ jobs:
   # 3. SONAR - Code Quality Analysis
   # ---------------------------------------------------------------------------
   sonar:
-    name: 📊 SonarCloud Analysis
-    needs: [ params, build ]
+    name: 📊 SonarCloud
+    needs: [params, build]
     if: needs.params.outputs.sonar_enabled == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Download coverage artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: coverage-report
 
@@ -240,91 +217,74 @@ jobs:
   # 4. DOCKER BUILD - Build Container Image
   # ---------------------------------------------------------------------------
   docker-build:
-    name: 🐳 Build Docker Image
-    needs: [ params, build ]
+    name: 🐳 Build Image
+    needs: [params, build]
     if: needs.params.outputs.docker_enabled == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    outputs:
-      scan-tag: ${{ steps.docker.outputs.scan-tag }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v5
 
       - name: Build Docker image
-        id: docker
         uses: pauszek/fsamp-code-ci/.github/actions/docker-build@main
         with:
           image-name: ${{ needs.params.outputs.docker_image_name }}
           dockerfile: ${{ needs.params.outputs.docker_dockerfile }}
           version: ${{ needs.params.outputs.version }}
           registry: ${{ needs.params.outputs.docker_registry }}
-          push: 'false'  # Don't push yet - wait for security scan
+          push: 'false'
 
-      - name: Save Docker image for scanning
-        run: |
-          docker save ${{ needs.params.outputs.docker_image_name }}:scan | gzip > docker-image.tar.gz
+      - name: Save image artifact
+        run: docker save ${{ needs.params.outputs.docker_image_name }}:scan | gzip > docker-image.tar.gz
 
-      - name: Upload Docker image artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: docker-image
           path: docker-image.tar.gz
           retention-days: 1
 
   # ---------------------------------------------------------------------------
-  # 6. SECURITY SCAN - Vulnerability Scanning (Trivy)
+  # 5. SECURITY SCAN
   # ---------------------------------------------------------------------------
   security-scan:
     name: 🔒 Security Scan
-    needs: [ params, docker-build ]
+    needs: [params, docker-build]
     if: needs.params.outputs.docker_enabled == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       security-events: write
-      actions: read
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
 
-      - name: Download Docker image artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: docker-image
 
-      - name: Load Docker image
-        run: |
-          gunzip -c docker-image.tar.gz | docker load
+      - name: Load image
+        run: gunzip -c docker-image.tar.gz | docker load
 
-      - name: Run security scan
+      - name: Run Trivy scan
         uses: pauszek/fsamp-code-ci/.github/actions/security-scan@main
         with:
           image-ref: ${{ needs.params.outputs.docker_image_name }}:scan
           severity: 'CRITICAL,HIGH'
           fail-on-vuln: 'true'
-          upload-sarif: 'false'  # Requires GitHub Advanced Security for private repos
+          upload-sarif: 'false'
 
   # ---------------------------------------------------------------------------
-  # 6b. E2E TESTS (PR) - Integration Tests on Pull Request
+  # 6. E2E TESTS (PR)
   # ---------------------------------------------------------------------------
   e2e-tests-pr:
     name: 🧪 E2E Tests (PR)
-    needs: [ params, security-scan ]
+    needs: [params, security-scan]
     if: |
       needs.params.outputs.docker_enabled == 'true' && 
-      github.event_name == 'pull_request' &&
-      needs.security-scan.result == 'success'
+      github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    
-    env:
-      LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
-      
     steps:
       - name: Generate GitHub App Token
         id: app-token
@@ -334,7 +294,7 @@ jobs:
           private-key: ${{ secrets.GABRBA_SECRET }}
           repositories: fsamp-infra,fsamp-gateway,fsamp-processor
 
-      - name: Checkout fsamp-infra (E2E infrastructure)
+      - name: Checkout fsamp-infra
         uses: actions/checkout@v5
         with:
           repository: pauszek/fsamp-infra
@@ -342,134 +302,34 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           path: infra
 
-      - name: Download Docker image artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: docker-image
 
-      - name: Load Docker image
-        id: load-image
+      - name: Load and tag image
+        id: load
         run: |
           gunzip -c docker-image.tar.gz | docker load
-          # Tag the image for E2E use
-          IMAGE_NAME="${{ needs.params.outputs.docker_image_name }}"
-          docker tag "${IMAGE_NAME}:scan" "${IMAGE_NAME}:pr-${{ github.event.pull_request.number }}"
-          echo "this_image=${IMAGE_NAME}:pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          IMAGE="${{ needs.params.outputs.docker_image_name }}"
+          docker tag "${IMAGE}:scan" "${IMAGE}:pr-${{ github.event.pull_request.number }}"
+          echo "this_image=${IMAGE}:pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve E2E test images
-        id: images
-        run: |
-          IMAGE_NAME="${{ needs.params.outputs.docker_image_name }}"
-          REGISTRY="${{ needs.params.outputs.docker_registry }}"
-          OWNER="${{ github.repository_owner }}"
-          COMPAT_FILE="infra/compatibility.yml"
-          THIS_IMAGE="${{ steps.load-image.outputs.this_image }}"
-          
-          echo "═══════════════════════════════════════════════════════"
-          echo "📋 Resolving E2E Test Images (PR)"
-          echo "═══════════════════════════════════════════════════════"
-          
-          CURRENT_GATEWAY=$(yq '.current.gateway' "$COMPAT_FILE")
-          CURRENT_PROCESSOR=$(yq '.current.processor' "$COMPAT_FILE")
-          
-          echo "Compatibility Matrix - Current Stable Versions:"
-          echo "  Gateway:   ${CURRENT_GATEWAY}"
-          echo "  Processor: ${CURRENT_PROCESSOR}"
-          echo ""
-          
-          if [[ "$IMAGE_NAME" == *"gateway"* ]]; then
-            GATEWAY_IMAGE="$THIS_IMAGE"
-            PROCESSOR_IMAGE="${REGISTRY}/${OWNER}/fsamp-processor:${CURRENT_PROCESSOR}"
-            echo "🔨 Testing: Gateway (from PR)"
-            echo "📦 This PR:        ${GATEWAY_IMAGE}"
-            echo "📦 Counterpart:    ${PROCESSOR_IMAGE} (from compatibility matrix)"
-          elif [[ "$IMAGE_NAME" == *"processor"* ]]; then
-            GATEWAY_IMAGE="${REGISTRY}/${OWNER}/fsamp-gateway:${CURRENT_GATEWAY}"
-            PROCESSOR_IMAGE="$THIS_IMAGE"
-            echo "🔨 Testing: Processor (from PR)"
-            echo "📦 Counterpart:    ${GATEWAY_IMAGE} (from compatibility matrix)"
-            echo "📦 This PR:        ${PROCESSOR_IMAGE}"
-          else
-            echo "❌ Unknown service: $IMAGE_NAME"
-            exit 1
-          fi
-          
-          echo "gateway_image=${GATEWAY_IMAGE}" >> "$GITHUB_OUTPUT"
-          echo "processor_image=${PROCESSOR_IMAGE}" >> "$GITHUB_OUTPUT"
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
+      - name: Run E2E Tests
+        uses: pauszek/fsamp-code-ci/.github/actions/run-e2e@main
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull counterpart image
-        run: |
-          IMAGE_NAME="${{ needs.params.outputs.docker_image_name }}"
-          if [[ "$IMAGE_NAME" == *"gateway"* ]]; then
-            echo "Pulling Processor: ${{ steps.images.outputs.processor_image }}"
-            docker pull "${{ steps.images.outputs.processor_image }}"
-          else
-            echo "Pulling Gateway: ${{ steps.images.outputs.gateway_image }}"
-            docker pull "${{ steps.images.outputs.gateway_image }}"
-          fi
-
-      - name: Start LocalStack
-        working-directory: infra/e2e
-        run: |
-          docker compose up -d localstack
-          echo "Waiting for LocalStack initialization..."
-          timeout 180 bash -c 'until docker exec fsamp-e2e-localstack test -f /tmp/localstack-config/fsamp-config.env 2>/dev/null; do sleep 5; done'
-          echo "✅ LocalStack initialized"
-
-      - name: Start application containers
-        working-directory: infra/e2e
-        env:
-          GATEWAY_IMAGE: ${{ steps.images.outputs.gateway_image }}
-          PROCESSOR_IMAGE: ${{ steps.images.outputs.processor_image }}
-        run: |
-          docker compose up -d gateway processor
-          echo "Waiting for Gateway..."
-          timeout 120 bash -c 'until curl -sf http://localhost:8080/actuator/health; do sleep 5; done'
-          echo "✅ Gateway healthy"
-          sleep 10
-          echo "✅ Processor started"
-
-      - name: Run E2E tests
-        working-directory: infra/e2e
-        env:
-          GATEWAY_IMAGE: ${{ steps.images.outputs.gateway_image }}
-          PROCESSOR_IMAGE: ${{ steps.images.outputs.processor_image }}
-        run: |
-          docker compose --profile test up --exit-code-from e2e-tests e2e-tests
-
-      - name: Collect logs on failure
-        if: failure()
-        working-directory: infra/e2e
-        run: |
-          echo "═══════════════════════════════════════════════════════"
-          echo "📋 E2E Test Failure - Collecting Logs"
-          echo "═══════════════════════════════════════════════════════"
-          echo "=== LocalStack ===" 
-          docker logs fsamp-e2e-localstack 2>&1 | tail -100 || true
-          echo "=== Gateway ==="
-          docker logs fsamp-e2e-gateway 2>&1 | tail -100 || true
-          echo "=== Processor ==="
-          docker logs fsamp-e2e-processor 2>&1 | tail -100 || true
-
-      - name: Cleanup
-        if: always()
-        working-directory: infra/e2e
-        run: |
-          docker compose down -v --remove-orphans || true
+          image-name: ${{ needs.params.outputs.docker_image_name }}
+          this-image: ${{ steps.load.outputs.this_image }}
+          registry: ${{ needs.params.outputs.docker_registry }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          app-token: ${{ steps.app-token.outputs.token }}
+          localstack-token: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
 
   # ---------------------------------------------------------------------------
-  # 7. DOCKER PUSH - Push to Registry (after security passes and E2E on PR)
+  # 7. DOCKER PUSH
   # ---------------------------------------------------------------------------
   docker-push:
     name: 📦 Push to Registry
-    needs: [ params, build, docker-build, security-scan, e2e-tests-pr ]
+    needs: [params, build, docker-build, security-scan, e2e-tests-pr]
     if: |
       always() &&
       needs.params.outputs.docker_enabled == 'true' && 
@@ -482,12 +342,9 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v5
 
-      - name: Build and push Docker image
+      - name: Build and push
         uses: pauszek/fsamp-code-ci/.github/actions/docker-build@main
         with:
           image-name: ${{ needs.params.outputs.docker_image_name }}
@@ -497,109 +354,47 @@ jobs:
           push: 'true'
 
   # ---------------------------------------------------------------------------
-  # 8. TAG & RELEASE - Create Git Tag and GitHub Release
+  # 8. TAG & RELEASE
   # ---------------------------------------------------------------------------
   tag-release:
     name: 🏷️ Tag & Release
-    needs: [ params, build ]
+    needs: [params, build]
     if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    outputs:
-      full_release: ${{ steps.cfg.outputs.full_release }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-
-      - name: Configure release outputs
-        id: cfg
-        shell: bash
-        env:
-          FULL: ${{ needs.params.outputs.release_full_release }}
-        run: |
-          set -euo pipefail
-          echo "full_release=${FULL:-false}" >> "$GITHUB_OUTPUT"
 
       - name: Create tag and release
         uses: pauszek/fsamp-code-ci/.github/actions/tag-and-release@main
         with:
           version-file: ${{ needs.params.outputs.files_version }}
-          full_release: ${{ steps.cfg.outputs.full_release }}
+          full_release: ${{ needs.params.outputs.release_full_release }}
           tag-prefix: v
 
   # ---------------------------------------------------------------------------
-  # 8b. UPDATE COMPATIBILITY - Notify fsamp-infra of new version
-  # ---------------------------------------------------------------------------
-  update-compatibility:
-    name: 📋 Update Compatibility Matrix
-    needs: [ params, tag-release ]
-    if: |
-      needs.params.outputs.docker_enabled == 'true' && 
-      github.event_name == 'push' && 
-      github.ref_name == needs.params.outputs.bump_base_branch &&
-      needs.tag-release.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Determine service name
-        id: service
-        run: |
-          IMAGE_NAME="${{ needs.params.outputs.docker_image_name }}"
-          if [[ "$IMAGE_NAME" == *"gateway"* ]]; then
-            echo "name=gateway" >> "$GITHUB_OUTPUT"
-          elif [[ "$IMAGE_NAME" == *"processor"* ]]; then
-            echo "name=processor" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=unknown" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Generate GitHub App Token for dispatch
-        if: steps.service.outputs.name != 'unknown'
-        id: dispatch-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ vars.GABRBA_APPID }}
-          private-key: ${{ secrets.GABRBA_SECRET }}
-          owner: pauszek
-          repositories: fsamp-infra
-
-      - name: Notify fsamp-infra to update compatibility matrix
-        if: steps.service.outputs.name != 'unknown'
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ steps.dispatch-token.outputs.token }}
-          repository: pauszek/fsamp-infra
-          event-type: update-compatibility
-          client-payload: |
-            {
-              "service": "${{ steps.service.outputs.name }}",
-              "version": "${{ needs.params.outputs.version }}"
-            }
-
-  # ---------------------------------------------------------------------------
-  # 9. BUMP - Auto-bump Version via PR
+  # 9. BUMP VERSION
   # ---------------------------------------------------------------------------
   bump:
     name: 🔄 Bump Version
-    needs: [ params, build, tag-release ]
+    needs: [params, build, tag-release]
     if: |
       needs.params.outputs.bump_enabled == 'true' && 
       github.event_name == 'push' && 
-      github.ref_name == needs.params.outputs.bump_base_branch && 
-      needs.tag-release.result == 'success'
+      github.ref_name == needs.params.outputs.bump_base_branch
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Bump release.version via PR
+      - name: Bump version via PR
         uses: pauszek/fsamp-code-ci/.github/actions/bump-release-version@main
         with:
           app-id: ${{ vars.GABRBA_APPID }}
@@ -609,11 +404,11 @@ jobs:
           label: ${{ needs.params.outputs.bump_label }}
 
   # ---------------------------------------------------------------------------
-  # 10. E2E TESTS - Full Stack Integration Tests (after push)
+  # 10. E2E TESTS (Post-Push)
   # ---------------------------------------------------------------------------
   e2e-tests:
-    name: 🧪 E2E Integration Tests
-    needs: [ params, docker-push ]
+    name: 🧪 E2E Tests
+    needs: [params, docker-push]
     if: |
       needs.params.outputs.docker_enabled == 'true' && 
       github.event_name == 'push' && 
@@ -621,11 +416,6 @@ jobs:
       needs.docker-push.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    
-    env:
-      LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
-      THIS_IMAGE: ${{ needs.params.outputs.docker_registry }}/${{ github.repository_owner }}/${{ needs.params.outputs.docker_image_name }}:${{ needs.params.outputs.version }}
-      
     steps:
       - name: Generate GitHub App Token
         id: app-token
@@ -635,165 +425,20 @@ jobs:
           private-key: ${{ secrets.GABRBA_SECRET }}
           repositories: fsamp-infra,fsamp-gateway,fsamp-processor
 
-      - name: Checkout fsamp-infra (E2E infrastructure)
+      - name: Checkout fsamp-infra
         uses: actions/checkout@v5
         with:
           repository: pauszek/fsamp-infra
           ref: main
-          path: infra
           token: ${{ steps.app-token.outputs.token }}
+          path: infra
 
-      - name: Debug - verify checkout
-        run: |
-          echo "Checking infra directory contents:"
-          ls -la infra/ || echo "infra/ directory not found"
-          echo ""
-          echo "Looking for compatibility.yml:"
-          ls -la infra/compatibility.yml || echo "compatibility.yml not found"
-
-      - name: Install yq for YAML parsing
-        run: |
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
-          sudo chmod +x /usr/local/bin/yq
-
-      - name: Resolve counterpart image from Compatibility Matrix
-        id: images
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          
-          IMAGE_NAME="${{ needs.params.outputs.docker_image_name }}"
-          REGISTRY="${{ needs.params.outputs.docker_registry }}"
-          OWNER="${{ github.repository_owner }}"
-          COMPAT_FILE="infra/compatibility.yml"
-          
-          echo "═══════════════════════════════════════════════════════"
-          echo "📋 Resolving E2E Test Images"
-          echo "═══════════════════════════════════════════════════════"
-          
-          # Read current stable versions from compatibility matrix
-          CURRENT_GATEWAY=$(yq '.current.gateway' "$COMPAT_FILE")
-          CURRENT_PROCESSOR=$(yq '.current.processor' "$COMPAT_FILE")
-          
-          echo "Compatibility Matrix - Current Stable Versions:"
-          echo "  Gateway:   ${CURRENT_GATEWAY}"
-          echo "  Processor: ${CURRENT_PROCESSOR}"
-          echo ""
-          
-          if [[ "$IMAGE_NAME" == *"gateway"* ]]; then
-            # This is Gateway build - use just-built Gateway + stable Processor
-            GATEWAY_IMAGE="$THIS_IMAGE"
-            PROCESSOR_IMAGE="${REGISTRY}/${OWNER}/fsamp-processor:${CURRENT_PROCESSOR}"
-            
-            echo "🔨 Building: Gateway"
-            echo "📦 This build:     ${GATEWAY_IMAGE}"
-            echo "📦 Counterpart:    ${PROCESSOR_IMAGE} (from compatibility matrix)"
-            
-          elif [[ "$IMAGE_NAME" == *"processor"* ]]; then
-            # This is Processor build - use stable Gateway + just-built Processor
-            GATEWAY_IMAGE="${REGISTRY}/${OWNER}/fsamp-gateway:${CURRENT_GATEWAY}"
-            PROCESSOR_IMAGE="$THIS_IMAGE"
-            
-            echo "🔨 Building: Processor"
-            echo "📦 Counterpart:    ${GATEWAY_IMAGE} (from compatibility matrix)"
-            echo "📦 This build:     ${PROCESSOR_IMAGE}"
-            
-          else
-            echo "❌ Unknown service: $IMAGE_NAME"
-            exit 1
-          fi
-          
-          # Validate versions are not empty
-          if [[ -z "$GATEWAY_IMAGE" ]] || [[ -z "$PROCESSOR_IMAGE" ]]; then
-            echo "❌ ERROR: Could not resolve image versions"
-            exit 1
-          fi
-          
-          # Output
-          echo "gateway_image=${GATEWAY_IMAGE}" >> "$GITHUB_OUTPUT"
-          echo "processor_image=${PROCESSOR_IMAGE}" >> "$GITHUB_OUTPUT"
-          
-          echo ""
-          echo "═══════════════════════════════════════════════════════"
-
-      - name: Validate images (no latest allowed)
-        run: |
-          if [[ "${{ steps.images.outputs.gateway_image }}" == *":latest" ]] || \
-             [[ "${{ steps.images.outputs.processor_image }}" == *":latest" ]]; then
-            echo "❌ ERROR: 'latest' tag is forbidden in E2E tests"
-            exit 1
-          fi
-          echo "✅ Images validated - no 'latest' tags"
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
+      - name: Run E2E Tests
+        uses: pauszek/fsamp-code-ci/.github/actions/run-e2e@main
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull images
-        run: |
-          echo "Pulling Gateway: ${{ steps.images.outputs.gateway_image }}"
-          docker pull "${{ steps.images.outputs.gateway_image }}"
-          
-          echo "Pulling Processor: ${{ steps.images.outputs.processor_image }}"
-          docker pull "${{ steps.images.outputs.processor_image }}"
-
-      - name: Start LocalStack
-        working-directory: infra/e2e
-        run: |
-          docker compose up -d localstack
-          
-          echo "Waiting for LocalStack initialization..."
-          timeout 180 bash -c 'until docker exec fsamp-e2e-localstack test -f /tmp/localstack-config/fsamp-config.env 2>/dev/null; do sleep 5; done'
-          
-          echo "✅ LocalStack initialized"
-          docker exec fsamp-e2e-localstack cat /tmp/localstack-config/fsamp-config.env
-
-      - name: Start application containers
-        working-directory: infra/e2e
-        env:
-          GATEWAY_IMAGE: ${{ steps.images.outputs.gateway_image }}
-          PROCESSOR_IMAGE: ${{ steps.images.outputs.processor_image }}
-        run: |
-          docker compose up -d gateway processor
-          
-          echo "Waiting for Gateway..."
-          timeout 120 bash -c 'until curl -sf http://localhost:8080/actuator/health; do sleep 5; done'
-          echo "✅ Gateway healthy"
-          
-          sleep 10
-          echo "✅ Processor started"
-
-      - name: Run E2E tests
-        working-directory: infra/e2e
-        env:
-          GATEWAY_IMAGE: ${{ steps.images.outputs.gateway_image }}
-          PROCESSOR_IMAGE: ${{ steps.images.outputs.processor_image }}
-        run: |
-          docker compose --profile test up --exit-code-from e2e-tests e2e-tests
-
-      - name: Collect logs on failure
-        if: failure()
-        working-directory: infra/e2e
-        run: |
-          echo "═══════════════════════════════════════════════════════"
-          echo "📋 E2E Test Failure - Collecting Logs"
-          echo "═══════════════════════════════════════════════════════"
-          echo ""
-          echo "=== LocalStack ===" 
-          docker logs fsamp-e2e-localstack 2>&1 | tail -100 || true
-          echo ""
-          echo "=== Gateway ==="
-          docker logs fsamp-e2e-gateway 2>&1 | tail -100 || true
-          echo ""
-          echo "=== Processor ==="
-          docker logs fsamp-e2e-processor 2>&1 | tail -100 || true
-
-      - name: Cleanup
-        if: always()
-        working-directory: infra/e2e
-        run: |
-          docker compose down -v --remove-orphans || true
+          image-name: ${{ needs.params.outputs.docker_image_name }}
+          this-image: ${{ needs.params.outputs.docker_registry }}/${{ github.repository_owner }}/${{ needs.params.outputs.docker_image_name }}:${{ needs.params.outputs.version }}
+          registry: ${{ needs.params.outputs.docker_registry }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          app-token: ${{ steps.app-token.outputs.token }}
+          localstack-token: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
