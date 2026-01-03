@@ -1,0 +1,167 @@
+name: Run E2E Tests
+description: Run E2E integration tests with LocalStack
+
+inputs:
+  image-name:
+    description: Docker image name (e.g., fsamp-gateway)
+    required: true
+  this-image:
+    description: Full image reference for the service being tested
+    required: true
+  registry:
+    description: Container registry
+    required: false
+    default: ghcr.io
+  github-token:
+    description: GitHub token for GHCR login
+    required: true
+  app-token:
+    description: GitHub App token for API access
+    required: true
+  localstack-token:
+    description: LocalStack Pro auth token
+    required: true
+  infra-path:
+    description: Path to fsamp-infra checkout
+    required: false
+    default: infra
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve counterpart image
+      id: images
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.app-token }}
+        IMAGE_NAME: ${{ inputs.image-name }}
+        REGISTRY: ${{ inputs.registry }}
+        THIS_IMAGE: ${{ inputs.this-image }}
+      run: |
+        set -euo pipefail
+        OWNER="${GITHUB_REPOSITORY_OWNER}"
+        
+        echo "═══════════════════════════════════════════════════════"
+        echo "📋 Resolving E2E Test Images"
+        echo "═══════════════════════════════════════════════════════"
+        
+        # Fetch latest release versions via GitHub API
+        CURRENT_GATEWAY=$(gh release view --repo "${OWNER}/fsamp-gateway" --json tagName -q '.tagName' 2>/dev/null || echo "")
+        CURRENT_PROCESSOR=$(gh release view --repo "${OWNER}/fsamp-processor" --json tagName -q '.tagName' 2>/dev/null || echo "")
+        
+        # Validate we got real versions
+        if [[ -z "$CURRENT_GATEWAY" ]] || [[ -z "$CURRENT_PROCESSOR" ]]; then
+          echo "❌ ERROR: Could not fetch release versions from GitHub API"
+          echo "  Gateway:   ${CURRENT_GATEWAY:-<not found>}"
+          echo "  Processor: ${CURRENT_PROCESSOR:-<not found>}"
+          exit 1
+        fi
+        
+        echo "Latest Releases:"
+        echo "  Gateway:   ${CURRENT_GATEWAY}"
+        echo "  Processor: ${CURRENT_PROCESSOR}"
+        echo ""
+        
+        if [[ "$IMAGE_NAME" == *"gateway"* ]]; then
+          GATEWAY_IMAGE="$THIS_IMAGE"
+          PROCESSOR_IMAGE="${REGISTRY}/${OWNER}/fsamp-processor:${CURRENT_PROCESSOR}"
+          echo "🔨 Testing: Gateway"
+          echo "📦 This build:  ${GATEWAY_IMAGE}"
+          echo "📦 Counterpart: ${PROCESSOR_IMAGE}"
+        elif [[ "$IMAGE_NAME" == *"processor"* ]]; then
+          GATEWAY_IMAGE="${REGISTRY}/${OWNER}/fsamp-gateway:${CURRENT_GATEWAY}"
+          PROCESSOR_IMAGE="$THIS_IMAGE"
+          echo "🔨 Testing: Processor"
+          echo "📦 Counterpart: ${GATEWAY_IMAGE}"
+          echo "📦 This build:  ${PROCESSOR_IMAGE}"
+        else
+          echo "❌ Unknown service: $IMAGE_NAME"
+          exit 1
+        fi
+        
+        echo "gateway_image=${GATEWAY_IMAGE}" >> "$GITHUB_OUTPUT"
+        echo "processor_image=${PROCESSOR_IMAGE}" >> "$GITHUB_OUTPUT"
+
+    - name: Login to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ inputs.github-token }}
+
+    - name: Pull counterpart image
+      shell: bash
+      env:
+        IMAGE_NAME: ${{ inputs.image-name }}
+        GATEWAY_IMAGE: ${{ steps.images.outputs.gateway_image }}
+        PROCESSOR_IMAGE: ${{ steps.images.outputs.processor_image }}
+      run: |
+        if [[ "$IMAGE_NAME" == *"gateway"* ]]; then
+          echo "Pulling Processor: ${PROCESSOR_IMAGE}"
+          docker pull "${PROCESSOR_IMAGE}"
+        else
+          echo "Pulling Gateway: ${GATEWAY_IMAGE}"
+          docker pull "${GATEWAY_IMAGE}"
+        fi
+
+    - name: Start LocalStack
+      shell: bash
+      working-directory: ${{ inputs.infra-path }}/e2e
+      env:
+        LOCALSTACK_AUTH_TOKEN: ${{ inputs.localstack-token }}
+      run: |
+        docker compose up -d localstack
+        echo "Waiting for LocalStack..."
+        timeout 180 bash -c 'until docker exec fsamp-e2e-localstack test -f /tmp/localstack-config/fsamp-config.env 2>/dev/null; do sleep 5; done'
+        echo "✅ LocalStack ready"
+
+    - name: Start application containers
+      shell: bash
+      working-directory: ${{ inputs.infra-path }}/e2e
+      env:
+        GATEWAY_IMAGE: ${{ steps.images.outputs.gateway_image }}
+        PROCESSOR_IMAGE: ${{ steps.images.outputs.processor_image }}
+      run: |
+        docker compose up -d gateway processor
+        echo "Waiting for Gateway health..."
+        timeout 120 bash -c 'until curl -sf http://localhost:8080/actuator/health; do sleep 5; done'
+        echo "✅ Gateway healthy"
+        sleep 10
+        echo "✅ Processor started"
+
+    - name: Run E2E tests
+      shell: bash
+      working-directory: ${{ inputs.infra-path }}/e2e
+      env:
+        GATEWAY_IMAGE: ${{ steps.images.outputs.gateway_image }}
+        PROCESSOR_IMAGE: ${{ steps.images.outputs.processor_image }}
+      run: |
+        docker compose --profile test up --exit-code-from e2e-tests e2e-tests
+
+    - name: Collect logs on failure
+      if: failure()
+      shell: bash
+      working-directory: ${{ inputs.infra-path }}/e2e
+      run: |
+        echo "═══════════════════════════════════════════════════════"
+        echo "📋 E2E Failure - Container Logs"
+        echo "═══════════════════════════════════════════════════════"
+        for container in localstack gateway processor; do
+          echo "=== ${container} ==="
+          docker logs "fsamp-e2e-${container}" 2>&1 | tail -100 || true
+          echo ""
+        done
+
+    - name: Cleanup
+      if: always()
+      shell: bash
+      working-directory: ${{ inputs.infra-path }}/e2e
+      run: docker compose down -v --remove-orphans || true
+
+outputs:
+  gateway_image:
+    description: Gateway image used in tests
+    value: ${{ steps.images.outputs.gateway_image }}
+  processor_image:
+    description: Processor image used in tests
+    value: ${{ steps.images.outputs.processor_image }}
