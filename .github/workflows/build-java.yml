@@ -562,11 +562,21 @@ jobs:
             echo "name=unknown" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Generate GitHub App Token for dispatch
+        if: steps.service.outputs.name != 'unknown'
+        id: dispatch-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.GABRBA_APPID }}
+          private-key: ${{ secrets.GABRBA_SECRET }}
+          owner: pauszek
+          repositories: fsamp-infra
+
       - name: Notify fsamp-infra to update compatibility matrix
         if: steps.service.outputs.name != 'unknown'
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.GABRBA_SECRET }}
+          token: ${{ steps.dispatch-token.outputs.token }}
           repository: pauszek/fsamp-infra
           event-type: update-compatibility
           client-payload: |
