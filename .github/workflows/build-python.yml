@@ -275,67 +275,16 @@ jobs:
           upload-sarif: 'false'
 
   # ---------------------------------------------------------------------------
-  # 6. E2E TESTS (PR)
-  # ---------------------------------------------------------------------------
-  e2e-tests-pr:
-    name: 🧪 E2E Tests (PR)
-    needs: [params, security-scan]
-    if: |
-      needs.params.outputs.docker_enabled == 'true' && 
-      github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Generate GitHub App Token
-        id: app-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ vars.GABRBA_APPID }}
-          private-key: ${{ secrets.GABRBA_SECRET }}
-          repositories: fsamp-infra,fsamp-gateway,fsamp-processor
-
-      - name: Checkout fsamp-infra
-        uses: actions/checkout@v5
-        with:
-          repository: pauszek/fsamp-infra
-          ref: main
-          token: ${{ steps.app-token.outputs.token }}
-          path: infra
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: docker-image
-
-      - name: Load and tag image
-        id: load
-        run: |
-          gunzip -c docker-image.tar.gz | docker load
-          IMAGE="${{ needs.params.outputs.docker_image_name }}"
-          docker tag "${IMAGE}:scan" "${IMAGE}:pr-${{ github.event.pull_request.number }}"
-          echo "this_image=${IMAGE}:pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
-
-      - name: Run E2E Tests
-        uses: pauszek/fsamp-code-ci/.github/actions/run-e2e@main
-        with:
-          image-name: ${{ needs.params.outputs.docker_image_name }}
-          this-image: ${{ steps.load.outputs.this_image }}
-          registry: ${{ needs.params.outputs.docker_registry }}
-          app-token: ${{ steps.app-token.outputs.token }}
-          localstack-token: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
-
-  # ---------------------------------------------------------------------------
-  # 7. DOCKER PUSH
+  # 6. DOCKER PUSH
   # ---------------------------------------------------------------------------
   docker-push:
     name: 📦 Push to Registry
-    needs: [params, build, docker-build, security-scan, e2e-tests-pr]
+    needs: [params, build, docker-build, security-scan]
     if: |
-      always() &&
       needs.params.outputs.docker_enabled == 'true' && 
       github.event_name == 'push' && 
       github.ref_name == needs.params.outputs.bump_base_branch &&
-      needs.security-scan.result == 'success' &&
-      (needs.e2e-tests-pr.result == 'success' || needs.e2e-tests-pr.result == 'skipped')
+      needs.security-scan.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -353,7 +302,7 @@ jobs:
           push: 'true'
 
   # ---------------------------------------------------------------------------
-  # 8. TAG & RELEASE
+  # 7. TAG & RELEASE
   # ---------------------------------------------------------------------------
   tag-release:
     name: 🏷️ Tag & Release
@@ -375,7 +324,7 @@ jobs:
           tag-prefix: v
 
   # ---------------------------------------------------------------------------
-  # 9. BUMP VERSION
+  # 8. BUMP VERSION
   # ---------------------------------------------------------------------------
   bump:
     name: 🔄 Bump Version
@@ -403,7 +352,7 @@ jobs:
           label: ${{ needs.params.outputs.bump_label }}
 
   # ---------------------------------------------------------------------------
-  # 10. E2E TESTS (Post-Push)
+  # 9. E2E TESTS (Post-Push)
   # ---------------------------------------------------------------------------
   e2e-tests:
     name: 🧪 E2E Tests
