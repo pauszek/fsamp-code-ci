@@ -1,5 +1,5 @@
 name: Run E2E Tests
-description: Run E2E integration tests with LocalStack
+description: Run E2E integration tests with LocalStack (builds counterpart locally)
 
 inputs:
   image-name:
@@ -8,12 +8,8 @@ inputs:
   this-image:
     description: Full image reference for the service being tested
     required: true
-  registry:
-    description: Container registry
-    required: false
-    default: ghcr.io
   app-token:
-    description: GitHub App token for API access and GHCR login
+    description: GitHub App token for repo access
     required: true
   localstack-token:
     description: LocalStack Pro auth token
@@ -26,82 +22,78 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Resolve counterpart image
-      id: images
+    - name: Determine counterpart
+      id: counterpart
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.app-token }}
         IMAGE_NAME: ${{ inputs.image-name }}
-        REGISTRY: ${{ inputs.registry }}
         THIS_IMAGE: ${{ inputs.this-image }}
       run: |
         set -euo pipefail
         OWNER="${GITHUB_REPOSITORY_OWNER}"
         
         echo "═══════════════════════════════════════════════════════"
-        echo "📋 Resolving E2E Test Images"
+        echo "📋 E2E Test Configuration"
         echo "═══════════════════════════════════════════════════════"
         
-        # Fetch latest release versions via GitHub API
-        CURRENT_GATEWAY=$(gh release view --repo "${OWNER}/fsamp-gateway" --json tagName -q '.tagName' 2>/dev/null || echo "")
-        CURRENT_PROCESSOR=$(gh release view --repo "${OWNER}/fsamp-processor" --json tagName -q '.tagName' 2>/dev/null || echo "")
-        
-        # Validate we got real versions
-        if [[ -z "$CURRENT_GATEWAY" ]] || [[ -z "$CURRENT_PROCESSOR" ]]; then
-          echo "❌ ERROR: Could not fetch release versions from GitHub API"
-          echo "  Gateway:   ${CURRENT_GATEWAY:-<not found>}"
-          echo "  Processor: ${CURRENT_PROCESSOR:-<not found>}"
-          exit 1
-        fi
-        
-        echo "Latest Releases:"
-        echo "  Gateway:   ${CURRENT_GATEWAY}"
-        echo "  Processor: ${CURRENT_PROCESSOR}"
-        echo ""
-        
         if [[ "$IMAGE_NAME" == *"gateway"* ]]; then
-          GATEWAY_IMAGE="$THIS_IMAGE"
-          PROCESSOR_IMAGE="${REGISTRY}/${OWNER}/fsamp-processor:${CURRENT_PROCESSOR}"
           echo "🔨 Testing: Gateway"
-          echo "📦 This build:  ${GATEWAY_IMAGE}"
-          echo "📦 Counterpart: ${PROCESSOR_IMAGE}"
+          echo "📦 This build: ${THIS_IMAGE}"
+          echo "🔧 Will build: Processor (from source)"
+          echo "service=gateway" >> "$GITHUB_OUTPUT"
+          echo "counterpart_repo=${OWNER}/fsamp-processor" >> "$GITHUB_OUTPUT"
+          echo "counterpart_name=fsamp-processor" >> "$GITHUB_OUTPUT"
+          echo "gateway_image=${THIS_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "processor_image=fsamp-processor:e2e" >> "$GITHUB_OUTPUT"
         elif [[ "$IMAGE_NAME" == *"processor"* ]]; then
-          GATEWAY_IMAGE="${REGISTRY}/${OWNER}/fsamp-gateway:${CURRENT_GATEWAY}"
-          PROCESSOR_IMAGE="$THIS_IMAGE"
           echo "🔨 Testing: Processor"
-          echo "📦 Counterpart: ${GATEWAY_IMAGE}"
-          echo "📦 This build:  ${PROCESSOR_IMAGE}"
+          echo "📦 This build: ${THIS_IMAGE}"
+          echo "🔧 Will build: Gateway (from source)"
+          echo "service=processor" >> "$GITHUB_OUTPUT"
+          echo "counterpart_repo=${OWNER}/fsamp-gateway" >> "$GITHUB_OUTPUT"
+          echo "counterpart_name=fsamp-gateway" >> "$GITHUB_OUTPUT"
+          echo "gateway_image=fsamp-gateway:e2e" >> "$GITHUB_OUTPUT"
+          echo "processor_image=${THIS_IMAGE}" >> "$GITHUB_OUTPUT"
         else
           echo "❌ Unknown service: $IMAGE_NAME"
           exit 1
         fi
+
+    - name: Checkout counterpart repo
+      uses: actions/checkout@v5
+      with:
+        repository: ${{ steps.counterpart.outputs.counterpart_repo }}
+        token: ${{ inputs.app-token }}
+        path: counterpart
+
+    - name: Set up JDK 21 (for Gateway)
+      if: steps.counterpart.outputs.counterpart_name == 'fsamp-gateway'
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+
+    - name: Build counterpart image
+      shell: bash
+      env:
+        COUNTERPART_NAME: ${{ steps.counterpart.outputs.counterpart_name }}
+      run: |
+        echo "═══════════════════════════════════════════════════════"
+        echo "🔧 Building Counterpart: ${COUNTERPART_NAME}"
+        echo "═══════════════════════════════════════════════════════"
         
-        echo "gateway_image=${GATEWAY_IMAGE}" >> "$GITHUB_OUTPUT"
-        echo "processor_image=${PROCESSOR_IMAGE}" >> "$GITHUB_OUTPUT"
-
-    - name: Login to GHCR
-      shell: bash
-      env:
-        GHCR_TOKEN: ${{ inputs.app-token }}
-      run: |
-        docker logout ghcr.io 2>/dev/null || true
-        echo "${GHCR_TOKEN}" | docker login ghcr.io -u x-access-token --password-stdin
-        echo "✅ GHCR login completed"
-
-    - name: Pull counterpart image
-      shell: bash
-      env:
-        IMAGE_NAME: ${{ inputs.image-name }}
-        GATEWAY_IMAGE: ${{ steps.images.outputs.gateway_image }}
-        PROCESSOR_IMAGE: ${{ steps.images.outputs.processor_image }}
-      run: |
-        if [[ "$IMAGE_NAME" == *"gateway"* ]]; then
-          echo "Pulling Processor: ${PROCESSOR_IMAGE}"
-          docker pull "${PROCESSOR_IMAGE}"
-        else
-          echo "Pulling Gateway: ${GATEWAY_IMAGE}"
-          docker pull "${GATEWAY_IMAGE}"
+        cd counterpart
+        
+        if [[ "$COUNTERPART_NAME" == "fsamp-gateway" ]]; then
+          # Build Java/Spring Boot app
+          ./mvnw clean package -DskipTests -q
+          docker build -t fsamp-gateway:e2e .
+        elif [[ "$COUNTERPART_NAME" == "fsamp-processor" ]]; then
+          # Build Python app
+          docker build -t fsamp-processor:e2e .
         fi
+        
+        echo "✅ Counterpart built: ${COUNTERPART_NAME}:e2e"
 
     - name: Start LocalStack
       shell: bash
@@ -118,13 +110,19 @@ runs:
       shell: bash
       working-directory: ${{ inputs.infra-path }}/e2e
       env:
-        GATEWAY_IMAGE: ${{ steps.images.outputs.gateway_image }}
-        PROCESSOR_IMAGE: ${{ steps.images.outputs.processor_image }}
+        GATEWAY_IMAGE: ${{ steps.counterpart.outputs.gateway_image }}
+        PROCESSOR_IMAGE: ${{ steps.counterpart.outputs.processor_image }}
       run: |
+        echo "Starting containers:"
+        echo "  Gateway:   ${GATEWAY_IMAGE}"
+        echo "  Processor: ${PROCESSOR_IMAGE}"
+        
         docker compose up -d gateway processor
+        
         echo "Waiting for Gateway health..."
         timeout 120 bash -c 'until curl -sf http://localhost:8080/actuator/health; do sleep 5; done'
         echo "✅ Gateway healthy"
+        
         sleep 10
         echo "✅ Processor started"
 
@@ -132,8 +130,8 @@ runs:
       shell: bash
       working-directory: ${{ inputs.infra-path }}/e2e
       env:
-        GATEWAY_IMAGE: ${{ steps.images.outputs.gateway_image }}
-        PROCESSOR_IMAGE: ${{ steps.images.outputs.processor_image }}
+        GATEWAY_IMAGE: ${{ steps.counterpart.outputs.gateway_image }}
+        PROCESSOR_IMAGE: ${{ steps.counterpart.outputs.processor_image }}
       run: |
         docker compose --profile test up --exit-code-from e2e-tests e2e-tests
 
@@ -160,7 +158,7 @@ runs:
 outputs:
   gateway_image:
     description: Gateway image used in tests
-    value: ${{ steps.images.outputs.gateway_image }}
+    value: ${{ steps.counterpart.outputs.gateway_image }}
   processor_image:
     description: Processor image used in tests
-    value: ${{ steps.images.outputs.processor_image }}
+    value: ${{ steps.counterpart.outputs.processor_image }}

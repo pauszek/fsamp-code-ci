@@ -374,11 +374,27 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           path: infra
 
+      - name: Checkout this repo
+        uses: actions/checkout@v5
+        with:
+          path: this-repo
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Build this service image
+        run: |
+          cd this-repo
+          ./mvnw clean package -DskipTests -q
+          docker build -t ${{ needs.params.outputs.docker_image_name }}:e2e-this .
+
       - name: Run E2E Tests
         uses: pauszek/fsamp-code-ci/.github/actions/run-e2e@main
         with:
           image-name: ${{ needs.params.outputs.docker_image_name }}
-          this-image: ${{ needs.params.outputs.docker_registry }}/${{ github.repository_owner }}/${{ needs.params.outputs.docker_image_name }}:${{ needs.params.outputs.version }}
-          registry: ${{ needs.params.outputs.docker_registry }}
+          this-image: ${{ needs.params.outputs.docker_image_name }}:e2e-this
           app-token: ${{ steps.app-token.outputs.token }}
           localstack-token: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
