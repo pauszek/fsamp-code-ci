@@ -166,7 +166,32 @@ jobs:
       - name: Integration tests
         run: |
           pip install testcontainers[localstack]
-          pytest -m integration -v --tb=short || echo "⚠️ No integration tests or Docker unavailable"
+          pytest -m integration -v --tb=short
+        env:
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
+
+      - name: Dependency audit (pip-audit)
+        run: |
+          pip install pip-audit
+          pip-audit --strict --desc --format json --output pip-audit-report.json || true
+          pip-audit --strict --desc
+
+      - name: Security static analysis (bandit)
+        run: |
+          pip install bandit
+          bandit -r src/ -f json -o bandit-report.json || true
+          bandit -r src/ -ll
+
+      - name: Dependency vulnerability scan (safety)
+        run: |
+          pip install safety
+          safety check --output json --save-json safety-report.json || true
+          safety check
+
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          pip install cyclonedx-bom
+          cyclonedx-py environment --output-format json --outfile bom.json
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
@@ -174,6 +199,41 @@ jobs:
           name: coverage-report
           path: coverage.xml
           retention-days: 1
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: bom.json
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Upload pip-audit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pip-audit-report
+          path: pip-audit-report.json
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Upload bandit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-report
+          path: bandit-report.json
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Upload safety report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: safety-report
+          path: safety-report.json
+          retention-days: 30
+          if-no-files-found: ignore
 
       - name: Codecov
         uses: codecov/codecov-action@v4
@@ -187,7 +247,7 @@ jobs:
   # ---------------------------------------------------------------------------
   sonar:
     name: 📊 SonarCloud
-    needs: [params, build]
+    needs: [ params, build ]
     if: needs.params.outputs.sonar_enabled == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -218,7 +278,7 @@ jobs:
   # ---------------------------------------------------------------------------
   docker-build:
     name: 🐳 Build Image
-    needs: [params, build]
+    needs: [ params, build ]
     if: needs.params.outputs.docker_enabled == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -250,7 +310,7 @@ jobs:
   # ---------------------------------------------------------------------------
   security-scan:
     name: 🔒 Security Scan
-    needs: [params, docker-build]
+    needs: [ params, docker-build ]
     if: needs.params.outputs.docker_enabled == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -279,7 +339,7 @@ jobs:
   # ---------------------------------------------------------------------------
   docker-push:
     name: 📦 Push to Registry
-    needs: [params, build, docker-build, security-scan]
+    needs: [ params, build, docker-build, security-scan ]
     if: |
       needs.params.outputs.docker_enabled == 'true' && 
       github.event_name == 'push' && 
@@ -306,7 +366,7 @@ jobs:
   # ---------------------------------------------------------------------------
   tag-release:
     name: 🏷️ Tag & Release
-    needs: [params, build]
+    needs: [ params, build ]
     if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
     runs-on: ubuntu-latest
     permissions:
@@ -328,7 +388,7 @@ jobs:
   # ---------------------------------------------------------------------------
   bump:
     name: 🔄 Bump Version
-    needs: [params, build, tag-release]
+    needs: [ params, build, tag-release ]
     if: |
       needs.params.outputs.bump_enabled == 'true' && 
       github.event_name == 'push' && 
@@ -356,7 +416,7 @@ jobs:
   # ---------------------------------------------------------------------------
   e2e-tests:
     name: 🧪 E2E Tests
-    needs: [params, docker-push]
+    needs: [ params, docker-push ]
     if: |
       needs.params.outputs.docker_enabled == 'true' && 
       github.event_name == 'push' && 
@@ -389,7 +449,7 @@ jobs:
       - name: Build this service image
         run: |
           cd this-repo
-          docker build -t ${{ needs.params.outputs.docker_image_name }}:e2e-this .
+          docker build --target production -t ${{ needs.params.outputs.docker_image_name }}:e2e-this .
 
       - name: Run E2E Tests
         uses: pauszek/fsamp-code-ci/.github/actions/run-e2e@main

@@ -89,8 +89,8 @@ runs:
           ./mvnw clean package -DskipTests -q
           docker build -t fsamp-gateway:e2e .
         elif [[ "$COUNTERPART_NAME" == "fsamp-processor" ]]; then
-          # Build Python app
-          docker build -t fsamp-processor:e2e .
+          # Build Python app (--target production skips development stage)
+          docker build --target production -t fsamp-processor:e2e .
         fi
         
         echo "✅ Counterpart built: ${COUNTERPART_NAME}:e2e"

@@ -125,3 +125,23 @@ runs:
         cache-to: type=gha,mode=max
         provenance: true
         sbom: true
+
+    # -------------------------------------------------------------------------
+    # Container Image Signing (FedRAMP SI-7 — Software Integrity)
+    # -------------------------------------------------------------------------
+    - name: Install cosign
+      if: inputs.push == 'true' && steps.build.outputs.digest != ''
+      uses: sigstore/cosign-installer@v3
+
+    - name: Sign container image (keyless — Sigstore/Fulcio OIDC)
+      if: inputs.push == 'true' && steps.build.outputs.digest != ''
+      shell: bash
+      env:
+        COSIGN_EXPERIMENTAL: "true"
+        DIGEST: ${{ steps.build.outputs.digest }}
+        TAGS: ${{ steps.meta.outputs.tags }}
+      run: |
+        # Extract the first tag for signing
+        IMAGE_REF=$(echo "${TAGS}" | head -n1)
+        echo "Signing image: ${IMAGE_REF}@${DIGEST}"
+        cosign sign --yes "${IMAGE_REF}@${DIGEST}"
