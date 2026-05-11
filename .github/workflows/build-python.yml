@@ -170,11 +170,45 @@ jobs:
         env:
           LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
 
+      - name: FIPS mode check (container)
+        if: needs.params.outputs.docker_enabled == 'true'
+        run: |
+          set -euo pipefail
+          if [[ ! -f "src/processor/infrastructure/fips.py" ]]; then
+            echo "FIPS check skipped (processor module not found)"
+            exit 0
+          fi
+
+          dockerfile="${{ needs.params.outputs.docker_dockerfile }}"
+          if [[ -z "$dockerfile" || ! -f "$dockerfile" ]]; then
+            echo "FIPS check skipped (dockerfile not found: $dockerfile)"
+            exit 0
+          fi
+
+          image="fips-check:${{ github.sha }}"
+          docker build -f "$dockerfile" -t "$image" .
+
+          docker run --rm --entrypoint /bin/sh "$image" -c '
+            set -euo pipefail
+            if [[ -d /var/task/processor ]]; then
+              export PYTHONPATH=/var/task
+              cd /var/task
+            elif [[ -d /app/src/processor ]]; then
+              export PYTHONPATH=/app/src
+              cd /app
+            else
+              echo "Processor package not found in image"
+              exit 1
+            fi
+
+            python -c "from processor.infrastructure.fips import enforce_fips; enforce_fips(True); print(\"FIPS_OK\")"
+          '
+
       - name: Dependency audit (pip-audit)
         run: |
           pip install pip-audit
-          pip-audit --strict --desc --format json --output pip-audit-report.json || true
-          pip-audit --strict --desc
+          pip-audit --strict --desc --skip-editable --format json --output pip-audit-report.json || true
+          pip-audit --strict --desc --skip-editable
 
       - name: Security static analysis (bandit)
         run: |
@@ -260,7 +294,7 @@ jobs:
           name: coverage-report
 
       - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@master
+        uses: SonarSource/sonarqube-scan-action@v7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -339,12 +373,13 @@ jobs:
   # ---------------------------------------------------------------------------
   docker-push:
     name: 📦 Push to Registry
-    needs: [ params, build, docker-build, security-scan ]
+    needs: [ params, build, docker-build, security-scan, e2e-tests ]
     if: |
       needs.params.outputs.docker_enabled == 'true' && 
       github.event_name == 'push' && 
       github.ref_name == needs.params.outputs.bump_base_branch &&
-      needs.security-scan.result == 'success'
+      needs.security-scan.result == 'success' &&
+      needs.e2e-tests.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -412,16 +447,14 @@ jobs:
           label: ${{ needs.params.outputs.bump_label }}
 
   # ---------------------------------------------------------------------------
-  # 9. E2E TESTS (Post-Push)
+  # 9. E2E TESTS (Required LocalStack gate)
   # ---------------------------------------------------------------------------
   e2e-tests:
     name: 🧪 E2E Tests
-    needs: [ params, docker-push ]
+    needs: [ params, docker-build, security-scan ]
     if: |
       needs.params.outputs.docker_enabled == 'true' && 
-      github.event_name == 'push' && 
-      github.ref_name == needs.params.outputs.bump_base_branch &&
-      needs.docker-push.result == 'success'
+      needs.security-scan.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -449,7 +482,7 @@ jobs:
       - name: Build this service image
         run: |
           cd this-repo
-          docker build --target production -t ${{ needs.params.outputs.docker_image_name }}:e2e-this .
+          docker build --target production --build-arg REQUIRE_FIPS_PROVIDER=false -t ${{ needs.params.outputs.docker_image_name }}:e2e-this .
 
       - name: Run E2E Tests
         uses: pauszek/fsamp-code-ci/.github/actions/run-e2e@main

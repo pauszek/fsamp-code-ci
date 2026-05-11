@@ -74,7 +74,7 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "~> 1.7"
+          terraform_version: "~> 1.14"
 
       - name: Terraform Format Check
         run: terraform fmt -check -recursive
@@ -116,18 +116,19 @@ jobs:
 
       - name: TFLint Init
         run: tflint --init
-        continue-on-error: true
 
       - name: TFLint
         run: tflint --recursive
-        continue-on-error: true
 
       - name: Run Checkov (Security Scan)
         uses: bridgecrewio/checkov-action@v12
         with:
           directory: ${{ needs.params.outputs.tf_working_directory }}
           framework: terraform
-          soft_fail: true
+          config_file: .checkov.yml
+          soft_fail: false
+          hard_fail_on: HIGH,CRITICAL
+          soft_fail_on: LOW,MEDIUM
           output_format: cli
           download_external_modules: false
 
