@@ -12,6 +12,9 @@ on:
       LOCALSTACK_AUTH_TOKEN:
         description: LocalStack Pro token for E2E tests
         required: false
+      NVD_API_KEY:
+        description: NIST NVD API key for OWASP Dependency-Check
+        required: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -291,6 +294,7 @@ jobs:
           fi
 
           exit "$status"
+        # Keep the NVD key scoped to OWASP Dependency-Check only.
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 

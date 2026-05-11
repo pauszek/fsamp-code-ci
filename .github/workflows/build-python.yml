@@ -205,10 +205,25 @@ jobs:
           '
 
       - name: Dependency audit (pip-audit)
+        shell: bash
         run: |
+          set -euo pipefail
           pip install pip-audit
-          pip-audit --strict --desc --skip-editable --format json --output pip-audit-report.json || true
-          pip-audit --strict --desc --skip-editable
+
+          audit_args=(--strict --desc)
+          requirement_args=()
+          [[ -f requirements.txt ]] && requirement_args+=(-r requirements.txt)
+          [[ -f requirements-dev.txt ]] && requirement_args+=(-r requirements-dev.txt)
+
+          if (( ${#requirement_args[@]} > 0 )); then
+            pip-audit "${audit_args[@]}" "${requirement_args[@]}" \
+              --format json --output pip-audit-report.json || true
+            pip-audit "${audit_args[@]}" "${requirement_args[@]}"
+          else
+            pip-audit "${audit_args[@]}" --skip-editable \
+              --format json --output pip-audit-report.json || true
+            pip-audit "${audit_args[@]}" --skip-editable
+          fi
 
       - name: Security static analysis (bandit)
         run: |
