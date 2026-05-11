@@ -246,10 +246,51 @@ jobs:
           java-version: ${{ needs.params.outputs.ci_java_version }}
           cache: maven
 
+      - name: Cache OWASP Dependency-Check data
+        uses: actions/cache@v4
+        with:
+          path: .dependency-check-data
+          key: dependency-check-${{ runner.os }}-${{ hashFiles('pom.xml') }}
+          restore-keys: |
+            dependency-check-${{ runner.os }}-
+
       - name: OWASP Dependency-Check
+        shell: bash
         run: |
-          mvn -B -ntp -Drevision=${{ needs.params.outputs.version }} \
-            verify -DskipTests -Psecurity
+          set -o pipefail
+
+          if [[ -n "${NVD_API_KEY:-}" ]]; then
+            nvd_delay="${NVD_API_DELAY:-1000}"
+          else
+            nvd_delay="${NVD_API_DELAY:-12000}"
+          fi
+
+          run_dependency_check() {
+            mvn -B -ntp \
+              -Drevision=${{ needs.params.outputs.version }} \
+              -DdataDirectory="${PWD}/.dependency-check-data" \
+              -DnvdApiKeyEnvironmentVariable=NVD_API_KEY \
+              -DnvdApiDelay="${nvd_delay}" \
+              -DnvdMaxRetryCount=20 \
+              -DnvdValidForHours=24 \
+              verify -DskipTests -Psecurity 2>&1 | tee dependency-check-maven.log
+          }
+
+          run_dependency_check
+          status=$?
+
+          if [[ "$status" -eq 0 ]]; then
+            exit 0
+          fi
+
+          if grep -Eiq 'Error updating the NVD Data|NVD Returned Status Code: 429|Unable to access the local database|NoDataException|database has been closed|odc\.mv\.db' dependency-check-maven.log; then
+            echo "::warning::Dependency-Check data update failed; clearing cached data and retrying once."
+            rm -rf .dependency-check-data
+            run_dependency_check
+            exit $?
+          fi
+
+          exit "$status"
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
