@@ -240,7 +240,7 @@ jobs:
       - name: Generate SBOM (CycloneDX)
         run: |
           pip install cyclonedx-bom
-          cyclonedx-py environment --output-format json --outfile bom.json
+          cyclonedx-py environment --output-format JSON --output-file bom.json
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
