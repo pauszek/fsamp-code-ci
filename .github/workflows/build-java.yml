@@ -195,7 +195,7 @@ jobs:
   # ---------------------------------------------------------------------------
   sonar:
     name: 📊 SonarCloud
-    needs: [params, build]
+    needs: [ params, build ]
     if: needs.params.outputs.sonar_enabled == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -235,7 +235,7 @@ jobs:
   # ---------------------------------------------------------------------------
   dependency-check:
     name: 🛡️ OWASP Dependency-Check
-    needs: [params, build]
+    needs: [ params, build ]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -294,7 +294,6 @@ jobs:
           fi
 
           exit "$status"
-        # Keep the NVD key scoped to OWASP Dependency-Check only.
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
@@ -313,7 +312,7 @@ jobs:
   # ---------------------------------------------------------------------------
   docker-build:
     name: 🐳 Build Image
-    needs: [params, build]
+    needs: [ params, build ]
     if: needs.params.outputs.docker_enabled == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -345,7 +344,7 @@ jobs:
   # ---------------------------------------------------------------------------
   security-scan:
     name: 🔒 Security Scan
-    needs: [params, docker-build]
+    needs: [ params, docker-build ]
     if: needs.params.outputs.docker_enabled == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -374,7 +373,7 @@ jobs:
   # ---------------------------------------------------------------------------
   docker-push:
     name: 📦 Push to Registry
-    needs: [params, build, docker-build, security-scan, e2e-tests]
+    needs: [ params, build, docker-build, security-scan, e2e-tests ]
     if: |
       needs.params.outputs.docker_enabled == 'true' && 
       github.event_name == 'push' && 
@@ -402,7 +401,7 @@ jobs:
   # ---------------------------------------------------------------------------
   tag-release:
     name: 🏷️ Tag & Release
-    needs: [params, build]
+    needs: [ params, build ]
     if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
     runs-on: ubuntu-latest
     permissions:
@@ -424,7 +423,7 @@ jobs:
   # ---------------------------------------------------------------------------
   bump:
     name: 🔄 Bump Version
-    needs: [params, build, tag-release]
+    needs: [ params, build, tag-release ]
     if: |
       needs.params.outputs.bump_enabled == 'true' && 
       github.event_name == 'push' && 
@@ -452,7 +451,7 @@ jobs:
   # ---------------------------------------------------------------------------
   e2e-tests:
     name: 🧪 E2E Tests
-    needs: [params, docker-build, security-scan]
+    needs: [ params, docker-build, security-scan ]
     if: |
       needs.params.outputs.docker_enabled == 'true' && 
       needs.security-scan.result == 'success'
