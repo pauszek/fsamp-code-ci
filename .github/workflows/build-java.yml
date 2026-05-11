@@ -329,12 +329,13 @@ jobs:
   # ---------------------------------------------------------------------------
   docker-push:
     name: 📦 Push to Registry
-    needs: [params, build, docker-build, security-scan]
+    needs: [params, build, docker-build, security-scan, e2e-tests]
     if: |
       needs.params.outputs.docker_enabled == 'true' && 
       github.event_name == 'push' && 
       github.ref_name == needs.params.outputs.bump_base_branch &&
-      needs.security-scan.result == 'success'
+      needs.security-scan.result == 'success' &&
+      needs.e2e-tests.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -402,16 +403,14 @@ jobs:
           label: ${{ needs.params.outputs.bump_label }}
 
   # ---------------------------------------------------------------------------
-  # 9. E2E TESTS (Post-Push)
+  # 9. E2E TESTS (Required LocalStack gate)
   # ---------------------------------------------------------------------------
   e2e-tests:
     name: 🧪 E2E Tests
-    needs: [params, docker-push]
+    needs: [params, docker-build, security-scan]
     if: |
       needs.params.outputs.docker_enabled == 'true' && 
-      github.event_name == 'push' && 
-      github.ref_name == needs.params.outputs.bump_base_branch &&
-      needs.docker-push.result == 'success'
+      needs.security-scan.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
