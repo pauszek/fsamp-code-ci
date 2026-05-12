@@ -22,27 +22,19 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Align fsamp-infra branch
+    - name: Report fsamp-infra ref
       shell: bash
       env:
-        APP_TOKEN: ${{ inputs.app-token }}
         INFRA_PATH: ${{ inputs.infra-path }}
       run: |
         set -euo pipefail
-        branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
-        if [[ -z "${branch}" || ! -d "${INFRA_PATH}/.git" ]]; then
-          echo "Using pre-checked-out fsamp-infra ref."
+        if [[ ! -d "${INFRA_PATH}/.git" ]]; then
+          echo "fsamp-infra checkout not found at ${INFRA_PATH}; later steps will fail with a clearer error."
           exit 0
         fi
 
-        repo_url="https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY_OWNER}/fsamp-infra.git"
-        if git ls-remote --exit-code --heads "${repo_url}" "${branch}" >/dev/null 2>&1; then
-          echo "Using fsamp-infra branch: ${branch}"
-          git -C "${INFRA_PATH}" fetch --depth=1 origin "refs/heads/${branch}:refs/remotes/origin/${branch}"
-          git -C "${INFRA_PATH}" checkout --detach "origin/${branch}"
-        else
-          echo "No fsamp-infra branch named ${branch}; keeping existing checkout."
-        fi
+        echo "Using pre-checked-out fsamp-infra ref:"
+        git -C "${INFRA_PATH}" --no-pager log -1 --oneline
 
     - name: Determine counterpart
       id: counterpart
@@ -156,6 +148,26 @@ runs:
         timeout 180 bash -c 'until docker exec fsamp-e2e-localstack test -f /tmp/localstack-config/fsamp-config.env 2>/dev/null; do sleep 5; done'
         echo "✅ LocalStack ready"
 
+        metadata_keys="$(docker exec fsamp-e2e-localstack awslocal dynamodb describe-table \
+          --table-name fsamp-local-file-metadata \
+          --query 'Table.KeySchema[].AttributeName' \
+          --output text)"
+        echo "fsamp-local-file-metadata key schema: ${metadata_keys}"
+        if [[ "${metadata_keys}" != *"PK"* || "${metadata_keys}" != *"SK"* ]]; then
+          echo "::error::fsamp-local-file-metadata must use PK/SK keys for current gateway builds."
+          exit 1
+        fi
+
+        outbox_keys="$(docker exec fsamp-e2e-localstack awslocal dynamodb describe-table \
+          --table-name fsamp-local-outbox \
+          --query 'Table.KeySchema[].AttributeName' \
+          --output text)"
+        echo "fsamp-local-outbox key schema: ${outbox_keys}"
+        if [[ "${outbox_keys}" != *"PK"* || "${outbox_keys}" != *"SK"* ]]; then
+          echo "::error::fsamp-local-outbox must use PK/SK keys for current gateway builds."
+          exit 1
+        fi
+
     - name: Start application containers
       shell: bash
       working-directory: ${{ inputs.infra-path }}/e2e
@@ -193,10 +205,22 @@ runs:
         echo "═══════════════════════════════════════════════════════"
         echo "📋 E2E Failure - Container Logs"
         echo "═══════════════════════════════════════════════════════"
+        if docker ps -a --format '{{.Names}}' | grep -qx "fsamp-e2e-localstack"; then
+          echo "=== dynamodb schemas ==="
+          for table in fsamp-local-file-metadata fsamp-local-outbox fsamp-local-idempotency-keys; do
+            echo "--- ${table} ---"
+            docker exec fsamp-e2e-localstack awslocal dynamodb describe-table \
+              --table-name "${table}" \
+              --query 'Table.{KeySchema:KeySchema,GlobalSecondaryIndexes:GlobalSecondaryIndexes[].KeySchema}' \
+              --output json 2>/dev/null || true
+          done
+          echo ""
+        fi
+
         for container in localstack gateway processor; do
           echo "=== ${container} ==="
           if docker ps -a --format '{{.Names}}' | grep -qx "fsamp-e2e-${container}"; then
-            docker logs "fsamp-e2e-${container}" 2>&1 | tail -100 || true
+            docker logs "fsamp-e2e-${container}" 2>&1 | tail -300 || true
           else
             echo "Container fsamp-e2e-${container} was not created."
           fi
