@@ -315,8 +315,23 @@ jobs:
             target/dependency-check-report.json
           retention-days: 30
 
+      - name: Inspect OWASP Dependency-Check data
+        id: owasp-data
+        if: always()
+        shell: bash
+        run: |
+          if [[ -d .dependency-check-data ]] && [[ -n "$(find .dependency-check-data -type f -print -quit)" ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "OWASP Dependency-Check data directory:"
+            du -sh .dependency-check-data || true
+            find .dependency-check-data -maxdepth 2 -type f | sort | sed -n '1,25p'
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::OWASP Dependency-Check did not create cacheable data; skipping cache save."
+          fi
+
       - name: Save OWASP Dependency-Check data
-        if: always() && steps.owasp-cache.outputs.cache-hit != 'true'
+        if: always() && steps.owasp-cache.outputs.cache-hit != 'true' && steps.owasp-data.outputs.present == 'true'
         uses: actions/cache/save@v4
         with:
           path: .dependency-check-data
