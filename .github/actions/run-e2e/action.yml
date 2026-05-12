@@ -101,6 +101,12 @@ runs:
       env:
         LOCALSTACK_AUTH_TOKEN: ${{ inputs.localstack-token }}
       run: |
+        if [[ -z "${LOCALSTACK_AUTH_TOKEN:-}" ]]; then
+          echo "::error::LOCALSTACK_AUTH_TOKEN is empty. Add it as a repository secret and pass it to the reusable workflow."
+          exit 1
+        fi
+
+        echo "LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN}" >> "$GITHUB_ENV"
         docker compose up -d localstack
         echo "Waiting for LocalStack..."
         timeout 180 bash -c 'until docker exec fsamp-e2e-localstack test -f /tmp/localstack-config/fsamp-config.env 2>/dev/null; do sleep 5; done'
