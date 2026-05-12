@@ -22,6 +22,28 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Align fsamp-infra branch
+      shell: bash
+      env:
+        APP_TOKEN: ${{ inputs.app-token }}
+        INFRA_PATH: ${{ inputs.infra-path }}
+      run: |
+        set -euo pipefail
+        branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
+        if [[ -z "${branch}" || ! -d "${INFRA_PATH}/.git" ]]; then
+          echo "Using pre-checked-out fsamp-infra ref."
+          exit 0
+        fi
+
+        repo_url="https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY_OWNER}/fsamp-infra.git"
+        if git ls-remote --exit-code --heads "${repo_url}" "${branch}" >/dev/null 2>&1; then
+          echo "Using fsamp-infra branch: ${branch}"
+          git -C "${INFRA_PATH}" fetch --depth=1 origin "refs/heads/${branch}:refs/remotes/origin/${branch}"
+          git -C "${INFRA_PATH}" checkout --detach "origin/${branch}"
+        else
+          echo "No fsamp-infra branch named ${branch}; keeping existing checkout."
+        fi
+
     - name: Determine counterpart
       id: counterpart
       shell: bash
@@ -59,10 +81,32 @@ runs:
           exit 1
         fi
 
+    - name: Determine counterpart ref
+      id: counterpart-ref
+      shell: bash
+      env:
+        APP_TOKEN: ${{ inputs.app-token }}
+        COUNTERPART_REPO: ${{ steps.counterpart.outputs.counterpart_repo }}
+      run: |
+        set -euo pipefail
+        branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
+        ref="main"
+
+        if [[ -n "${branch}" ]]; then
+          repo_url="https://x-access-token:${APP_TOKEN}@github.com/${COUNTERPART_REPO}.git"
+          if git ls-remote --exit-code --heads "${repo_url}" "${branch}" >/dev/null 2>&1; then
+            ref="${branch}"
+          fi
+        fi
+
+        echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+        echo "Counterpart ref: ${ref}"
+
     - name: Checkout counterpart repo
       uses: actions/checkout@v5
       with:
         repository: ${{ steps.counterpart.outputs.counterpart_repo }}
+        ref: ${{ steps.counterpart-ref.outputs.ref }}
         token: ${{ inputs.app-token }}
         path: counterpart
 
