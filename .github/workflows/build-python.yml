@@ -321,6 +321,7 @@ jobs:
             -Dsonar.tests=tests
             -Dsonar.python.coverage.reportPaths=coverage.xml
             -Dsonar.python.version=${{ needs.params.outputs.ci_python_version }}
+            -Dsonar.coverage.exclusions=**/__init__.py
 
   # ---------------------------------------------------------------------------
   # 4. DOCKER BUILD - Build Container Image
