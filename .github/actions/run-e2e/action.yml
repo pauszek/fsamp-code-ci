@@ -134,7 +134,7 @@ runs:
           docker build -t fsamp-gateway:e2e .
         elif [[ "$COUNTERPART_NAME" == "fsamp-processor" ]]; then
           # Build Python app
-          docker build --build-arg REQUIRE_FIPS_PROVIDER=false -t fsamp-processor:e2e .
+          docker build --target production --build-arg REQUIRE_FIPS_PROVIDER=false -t fsamp-processor:e2e .
         fi
         
         echo "✅ Counterpart built: ${COUNTERPART_NAME}:e2e"
@@ -195,7 +195,11 @@ runs:
         echo "═══════════════════════════════════════════════════════"
         for container in localstack gateway processor; do
           echo "=== ${container} ==="
-          docker logs "fsamp-e2e-${container}" 2>&1 | tail -100 || true
+          if docker ps -a --format '{{.Names}}' | grep -qx "fsamp-e2e-${container}"; then
+            docker logs "fsamp-e2e-${container}" 2>&1 | tail -100 || true
+          else
+            echo "Container fsamp-e2e-${container} was not created."
+          fi
           echo ""
         done
 
@@ -203,6 +207,8 @@ runs:
       if: always()
       shell: bash
       working-directory: ${{ inputs.infra-path }}/e2e
+      env:
+        LOCALSTACK_AUTH_TOKEN: ${{ inputs.localstack-token }}
       run: docker compose down -v --remove-orphans || true
 
 outputs:
