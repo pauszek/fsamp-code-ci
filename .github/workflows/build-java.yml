@@ -249,11 +249,17 @@ jobs:
           java-version: ${{ needs.params.outputs.ci_java_version }}
           cache: maven
 
-      - name: Cache OWASP Dependency-Check data
-        uses: actions/cache@v4
+      - name: Compute OWASP cache key
+        id: owasp-cache-key
+        shell: bash
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore OWASP Dependency-Check data
+        id: owasp-cache
+        uses: actions/cache/restore@v4
         with:
           path: .dependency-check-data
-          key: dependency-check-${{ runner.os }}-${{ hashFiles('pom.xml') }}
+          key: dependency-check-${{ runner.os }}-${{ steps.owasp-cache-key.outputs.date }}
           restore-keys: |
             dependency-check-${{ runner.os }}-
 
@@ -264,8 +270,10 @@ jobs:
 
           if [[ -n "${NVD_API_KEY:-}" ]]; then
             nvd_delay="${NVD_API_DELAY:-1000}"
+            echo "NVD API key configured: yes"
           else
             nvd_delay="${NVD_API_DELAY:-12000}"
+            echo "::warning::NVD_API_KEY is not configured; Dependency-Check NVD updates will be much slower."
           fi
 
           run_dependency_check() {
@@ -306,6 +314,13 @@ jobs:
             target/dependency-check-report.html
             target/dependency-check-report.json
           retention-days: 30
+
+      - name: Save OWASP Dependency-Check data
+        if: always() && steps.owasp-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .dependency-check-data
+          key: dependency-check-${{ runner.os }}-${{ steps.owasp-cache-key.outputs.date }}
 
   # ---------------------------------------------------------------------------
   # 4. DOCKER BUILD - Build Container Image
