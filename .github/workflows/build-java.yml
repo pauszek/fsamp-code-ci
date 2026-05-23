@@ -276,6 +276,7 @@ jobs:
           if [[ -d .dependency-check-data ]] && [[ -n "$(find .dependency-check-data -type f -print -quit)" ]]; then
             du -sh .dependency-check-data || true
             find .dependency-check-data -maxdepth 2 -type f | sort | sed -n '1,25p'
+            find .dependency-check-data -type f -name "*.lock" -print -delete
           else
             echo "No restored OWASP data found."
           fi
@@ -311,7 +312,7 @@ jobs:
             exit 0
           fi
 
-          if grep -Eiq 'Error updating the NVD Data|NVD Returned Status Code: 429|Unable to access the local database|NoDataException|database has been closed|odc\.mv\.db' dependency-check-maven.log; then
+          if grep -Eiq 'Error updating the NVD Data|NVD Returned Status Code: 429|Unable to access the local database|Unable to obtain an exclusive lock|WriteLockException|NoDataException|database has been closed|odc\.mv\.db|odc\.update\.lock' dependency-check-maven.log; then
             echo "::warning::Dependency-Check data update failed; clearing cached data and retrying once."
             rm -rf .dependency-check-data
             run_dependency_check
@@ -338,17 +339,25 @@ jobs:
         shell: bash
         run: |
           if [[ -d .dependency-check-data ]] && [[ -n "$(find .dependency-check-data -type f -print -quit)" ]]; then
+            find .dependency-check-data -type f -name "*.lock" -print -delete
             echo "present=true" >> "$GITHUB_OUTPUT"
             echo "OWASP Dependency-Check data directory:"
             du -sh .dependency-check-data || true
             find .dependency-check-data -maxdepth 2 -type f | sort | sed -n '1,25p'
+            if [[ -f target/dependency-check-report.json ]] || grep -q "Check for updates complete" dependency-check-maven.log 2>/dev/null; then
+              echo "cacheable=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "cacheable=false" >> "$GITHUB_OUTPUT"
+              echo "::warning::OWASP Dependency-Check data was not fully updated; skipping cache save."
+            fi
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "cacheable=false" >> "$GITHUB_OUTPUT"
             echo "::warning::OWASP Dependency-Check did not create cacheable data; skipping cache save."
           fi
 
       - name: Save OWASP Dependency-Check data
-        if: always() && steps.owasp-data.outputs.present == 'true'
+        if: always() && steps.owasp-data.outputs.present == 'true' && steps.owasp-data.outputs.cacheable == 'true'
         uses: actions/cache/save@v4
         with:
           path: .dependency-check-data
