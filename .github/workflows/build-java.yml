@@ -252,16 +252,33 @@ jobs:
       - name: Compute OWASP cache key
         id: owasp-cache-key
         shell: bash
-        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+        run: |
+          {
+            echo "date=$(date -u +%Y-%m-%d)"
+            echo "key=dependency-check-${{ runner.os }}-$(date -u +%Y-%m-%d)-${{ github.run_id }}-${{ github.run_attempt }}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Restore OWASP Dependency-Check data
         id: owasp-cache
         uses: actions/cache/restore@v4
         with:
           path: .dependency-check-data
-          key: dependency-check-${{ runner.os }}-${{ steps.owasp-cache-key.outputs.date }}
+          key: ${{ steps.owasp-cache-key.outputs.key }}
           restore-keys: |
+            dependency-check-${{ runner.os }}-${{ steps.owasp-cache-key.outputs.date }}-
             dependency-check-${{ runner.os }}-
+
+      - name: Inspect restored OWASP Dependency-Check data
+        shell: bash
+        run: |
+          echo "OWASP cache hit: ${{ steps.owasp-cache.outputs.cache-hit }}"
+          echo "OWASP cache matched key: ${{ steps.owasp-cache.outputs.cache-matched-key }}"
+          if [[ -d .dependency-check-data ]] && [[ -n "$(find .dependency-check-data -type f -print -quit)" ]]; then
+            du -sh .dependency-check-data || true
+            find .dependency-check-data -maxdepth 2 -type f | sort | sed -n '1,25p'
+          else
+            echo "No restored OWASP data found."
+          fi
 
       - name: OWASP Dependency-Check
         shell: bash
@@ -331,11 +348,11 @@ jobs:
           fi
 
       - name: Save OWASP Dependency-Check data
-        if: always() && steps.owasp-cache.outputs.cache-hit != 'true' && steps.owasp-data.outputs.present == 'true'
+        if: always() && steps.owasp-data.outputs.present == 'true'
         uses: actions/cache/save@v4
         with:
           path: .dependency-check-data
-          key: dependency-check-${{ runner.os }}-${{ steps.owasp-cache-key.outputs.date }}
+          key: ${{ steps.owasp-cache-key.outputs.key }}
 
   # ---------------------------------------------------------------------------
   # 4. DOCKER BUILD - Build Container Image
@@ -347,7 +364,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
       packages: write
     steps:
       - uses: actions/checkout@v5
@@ -414,6 +430,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
       packages: write
     steps:
       - uses: actions/checkout@v5
