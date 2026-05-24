@@ -74,14 +74,13 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "~> 1.14"
+          terraform_version: "1.7.4"
 
       - name: Terraform Format Check
         run: terraform fmt -check -recursive
 
       - name: Terraform Init (validation only)
         run: |
-          # Check if environments subdirectories exist
           if compgen -G "environments/*/" > /dev/null 2>&1; then
             for env in environments/*/; do
               echo "::group::Init $env"
@@ -89,7 +88,6 @@ jobs:
               echo "::endgroup::"
             done
           else
-            # Single root terraform configuration
             echo "::group::Init root"
             terraform init -backend=false
             echo "::endgroup::"
@@ -97,7 +95,6 @@ jobs:
 
       - name: Terraform Validate
         run: |
-          # Check if environments subdirectories exist
           if compgen -G "environments/*/" > /dev/null 2>&1; then
             for env in environments/*/; do
               echo "::group::Validate $env"
@@ -105,7 +102,6 @@ jobs:
               echo "::endgroup::"
             done
           else
-            # Single root terraform configuration
             echo "::group::Validate root"
             terraform validate
             echo "::endgroup::"
