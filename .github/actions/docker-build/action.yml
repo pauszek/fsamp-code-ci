@@ -1,15 +1,3 @@
-# =============================================================================
-# Docker Build Action
-# =============================================================================
-# Builds Docker image with multi-platform support.
-# Security scanning is handled by a separate job for better separation of concerns.
-#
-# Features:
-#   - Multi-platform builds (amd64, arm64)
-#   - GitHub Container Registry (GHCR) support
-#   - Build caching via GitHub Actions cache
-#   - SBOM and provenance attestation
-# =============================================================================
 name: Docker Build
 description: Build Docker image and optionally push to registry
 
@@ -59,18 +47,12 @@ outputs:
 runs:
   using: composite
   steps:
-    # -------------------------------------------------------------------------
-    # Setup Docker Build Environment
-    # -------------------------------------------------------------------------
     - name: Set up QEMU (for multi-arch builds)
       uses: docker/setup-qemu-action@v3
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    # -------------------------------------------------------------------------
-    # Registry Authentication
-    # -------------------------------------------------------------------------
     - name: Log in to GitHub Container Registry
       if: inputs.registry == 'ghcr.io' && inputs.push == 'true'
       uses: docker/login-action@v3
@@ -79,9 +61,6 @@ runs:
         username: ${{ github.actor }}
         password: ${{ github.token }}
 
-    # -------------------------------------------------------------------------
-    # Image Metadata
-    # -------------------------------------------------------------------------
     - name: Extract metadata for Docker
       id: meta
       uses: docker/metadata-action@v5
@@ -90,9 +69,6 @@ runs:
         tags: |
           type=raw,value=${{ inputs.version }}
 
-    # -------------------------------------------------------------------------
-    # Build Image (local - for scanning)
-    # -------------------------------------------------------------------------
     - name: Build Docker image (local)
       uses: docker/build-push-action@v6
       with:
@@ -106,9 +82,6 @@ runs:
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
-    # -------------------------------------------------------------------------
-    # Build & Push to Registry
-    # -------------------------------------------------------------------------
     - name: Build and push to registry
       id: build
       if: inputs.push == 'true'
@@ -126,9 +99,6 @@ runs:
         provenance: true
         sbom: true
 
-    # -------------------------------------------------------------------------
-    # Container Image Signing (FedRAMP SI-7 — Software Integrity)
-    # -------------------------------------------------------------------------
     - name: Install cosign
       if: inputs.push == 'true' && steps.build.outputs.digest != ''
       uses: sigstore/cosign-installer@v3
@@ -141,7 +111,6 @@ runs:
         DIGEST: ${{ steps.build.outputs.digest }}
         TAGS: ${{ steps.meta.outputs.tags }}
       run: |
-        # Extract the first tag for signing
         IMAGE_REF=$(echo "${TAGS}" | head -n1)
         echo "Signing image: ${IMAGE_REF}@${DIGEST}"
         cosign sign --yes "${IMAGE_REF}@${DIGEST}"

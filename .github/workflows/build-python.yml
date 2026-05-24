@@ -18,11 +18,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # 1. PARAMS - Load Configuration
-  # ---------------------------------------------------------------------------
   params:
-    name: 📋 Load Configuration
+    name: Load Configuration
     runs-on: ubuntu-latest
     outputs:
       ci_python_version: ${{ steps.out.outputs.ci_python_version }}
@@ -92,12 +89,8 @@ jobs:
         run: |
           file="${{ steps.out.outputs.files_version }}"
           [[ -s "$file" ]] && echo "version=$(tr -d ' \r\n' < "$file")" >> "$GITHUB_OUTPUT" || echo "version=0.0.0" >> "$GITHUB_OUTPUT"
-
-  # ---------------------------------------------------------------------------
-  # 2. BUILD - Lint, Test, Coverage
-  # ---------------------------------------------------------------------------
   build:
-    name: 🔨 Build & Test
+    name: Build and Test
     needs: params
     runs-on: ubuntu-latest
     permissions:
@@ -290,12 +283,8 @@ jobs:
         with:
           files: coverage.xml
           fail_ci_if_error: false
-
-  # ---------------------------------------------------------------------------
-  # 3. SONAR - Code Quality Analysis
-  # ---------------------------------------------------------------------------
   sonar:
-    name: 📊 SonarCloud
+    name: SonarCloud
     needs: [ params, build ]
     if: needs.params.outputs.sonar_enabled == 'true'
     runs-on: ubuntu-latest
@@ -322,12 +311,8 @@ jobs:
             -Dsonar.python.coverage.reportPaths=coverage.xml
             -Dsonar.python.version=${{ needs.params.outputs.ci_python_version }}
             -Dsonar.coverage.exclusions=**/__init__.py
-
-  # ---------------------------------------------------------------------------
-  # 4. DOCKER BUILD - Build Container Image
-  # ---------------------------------------------------------------------------
   docker-build:
-    name: 🐳 Build Image
+    name: Build Image
     needs: [ params, build ]
     if: needs.params.outputs.docker_enabled == 'true'
     runs-on: ubuntu-latest
@@ -354,12 +339,8 @@ jobs:
           name: docker-image
           path: docker-image.tar.gz
           retention-days: 1
-
-  # ---------------------------------------------------------------------------
-  # 5. SECURITY SCAN
-  # ---------------------------------------------------------------------------
   security-scan:
-    name: 🔒 Security Scan
+    name: Security Scan
     needs: [ params, docker-build ]
     if: needs.params.outputs.docker_enabled == 'true'
     runs-on: ubuntu-latest
@@ -383,12 +364,8 @@ jobs:
           severity: 'CRITICAL,HIGH'
           fail-on-vuln: 'true'
           upload-sarif: 'false'
-
-  # ---------------------------------------------------------------------------
-  # 6. DOCKER PUSH
-  # ---------------------------------------------------------------------------
   docker-push:
-    name: 📦 Push to Registry
+    name: Push to Registry
     needs: [ params, build, docker-build, security-scan, e2e-tests ]
     if: |
       needs.params.outputs.docker_enabled == 'true' && 
@@ -412,12 +389,8 @@ jobs:
           version: ${{ needs.params.outputs.version }}
           registry: ${{ needs.params.outputs.docker_registry }}
           push: 'true'
-
-  # ---------------------------------------------------------------------------
-  # 7. TAG & RELEASE
-  # ---------------------------------------------------------------------------
   tag-release:
-    name: 🏷️ Tag & Release
+    name: Tag and Release
     needs: [ params, build ]
     if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
     runs-on: ubuntu-latest
@@ -434,12 +407,8 @@ jobs:
           version-file: ${{ needs.params.outputs.files_version }}
           full_release: ${{ needs.params.outputs.release_full_release }}
           tag-prefix: v
-
-  # ---------------------------------------------------------------------------
-  # 8. BUMP VERSION
-  # ---------------------------------------------------------------------------
   bump:
-    name: 🔄 Bump Version
+    name: Bump Version
     needs: [ params, build, tag-release ]
     if: |
       needs.params.outputs.bump_enabled == 'true' && 
@@ -462,12 +431,8 @@ jobs:
           version-file: ${{ needs.params.outputs.files_version }}
           base-branch: ${{ needs.params.outputs.bump_base_branch }}
           label: ${{ needs.params.outputs.bump_label }}
-
-  # ---------------------------------------------------------------------------
-  # 9. E2E TESTS (Required LocalStack gate)
-  # ---------------------------------------------------------------------------
   e2e-tests:
-    name: 🧪 E2E Tests
+    name: E2E Tests
     needs: [ params, docker-build, security-scan ]
     if: |
       needs.params.outputs.docker_enabled == 'true' && 

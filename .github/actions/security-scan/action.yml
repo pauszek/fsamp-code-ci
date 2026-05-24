@@ -1,17 +1,3 @@
-# =============================================================================
-# Security Scan Action
-# =============================================================================
-# Scans Docker images for vulnerabilities using Trivy.
-# 
-# Features:
-#   - Vulnerability scanning (OS packages, language dependencies)
-#   - Configurable severity threshold (CRITICAL, HIGH, MEDIUM, LOW)
-#   - SARIF report generation for GitHub Security tab (optional)
-#   - Fails pipeline on HIGH/CRITICAL vulnerabilities (configurable)
-#
-# Note: SARIF upload requires GitHub Advanced Security (GHAS) for private repos.
-#       On public repos or with GHAS, results appear in Security tab.
-# =============================================================================
 name: Security Scan
 description: Scan Docker image for vulnerabilities with Trivy
 
@@ -43,9 +29,6 @@ outputs:
 runs:
   using: composite
   steps:
-    # -------------------------------------------------------------------------
-    # Vulnerability Scan with Trivy (Table format for logs)
-    # -------------------------------------------------------------------------
     - name: Run Trivy vulnerability scanner (table)
       id: scan
       uses: aquasecurity/trivy-action@v0.35.0
@@ -57,9 +40,6 @@ runs:
       env:
         TRIVY_DB_REPOSITORY: 'ghcr.io/aquasecurity/trivy-db:2'
 
-    # -------------------------------------------------------------------------
-    # Generate SARIF report (for GitHub Security tab)
-    # -------------------------------------------------------------------------
     - name: Generate SARIF report
       if: inputs.upload-sarif == 'true'
       uses: aquasecurity/trivy-action@v0.35.0
@@ -68,39 +48,32 @@ runs:
         format: 'sarif'
         output: 'trivy-results.sarif'
         severity: ${{ inputs.severity }}
-        exit-code: '0'  # Don't fail again, already checked above
+        exit-code: '0'
       env:
         TRIVY_DB_REPOSITORY: 'ghcr.io/aquasecurity/trivy-db:2'
 
-    # -------------------------------------------------------------------------
-    # Upload Results to GitHub Security Tab
-    # -------------------------------------------------------------------------
     - name: Upload Trivy SARIF to GitHub Security
       uses: github/codeql-action/upload-sarif@v4
       if: always() && inputs.upload-sarif == 'true'
-      continue-on-error: true  # Silently fails on private repos without GHAS
+      continue-on-error: true
       with:
         sarif_file: 'trivy-results.sarif'
 
-    # -------------------------------------------------------------------------
-    # Summary Report
-    # -------------------------------------------------------------------------
     - name: Generate scan summary
       if: always()
       shell: bash
       run: |
-        echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+        echo "## Security Scan Results" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Image:** \`${{ inputs.image-ref }}\`" >> $GITHUB_STEP_SUMMARY
         echo "**Severity filter:** ${{ inputs.severity }}" >> $GITHUB_STEP_SUMMARY
         echo "**Fail on vulnerabilities:** ${{ inputs.fail-on-vuln }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # Check exit status from previous scan step
+
         if [ "${{ steps.scan.outcome }}" == "failure" ]; then
-          echo "⚠️ **Vulnerabilities found matching severity filter!**" >> $GITHUB_STEP_SUMMARY
+          echo "**Vulnerabilities found matching severity filter.**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Check the 'Run Trivy vulnerability scanner' step output above for details." >> $GITHUB_STEP_SUMMARY
         else
-          echo "✅ **No vulnerabilities found matching ${{ inputs.severity }}**" >> $GITHUB_STEP_SUMMARY
+          echo "**No vulnerabilities found matching ${{ inputs.severity }}.**" >> $GITHUB_STEP_SUMMARY
         fi
