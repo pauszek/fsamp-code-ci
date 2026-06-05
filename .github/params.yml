@@ -1,6 +1,10 @@
 ci:
   java-version: '21'
-  distribution: temurin
+  # Amazon Corretto is required so that the FIPS 140-3-oriented test profile
+  # (Amazon Corretto Crypto Provider + BC-FIPS) is exercised during CI.
+  # Override per repository in .github/params.yml when a different distribution
+  # is needed for a specific service.
+  distribution: corretto
 files:
   version: release.version
 bump:

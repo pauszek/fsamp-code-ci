@@ -16,6 +16,9 @@ on:
         description: NIST NVD API key for OWASP Dependency-Check
         required: false
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -42,7 +45,7 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
@@ -102,7 +105,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
@@ -119,7 +122,7 @@ jobs:
       - name: Generate GitHub App Token
         if: steps.schema.outputs.exists == 'true'
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
         with:
           app-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}
@@ -127,7 +130,7 @@ jobs:
 
       - name: Checkout event schema
         if: steps.schema.outputs.exists == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           repository: pauszek/fsamp-event-schema
           path: schema-repo
@@ -141,7 +144,7 @@ jobs:
           cp schema-repo/event.schema.json schema/
 
       - name: Setup Java ${{ needs.params.outputs.ci_java_version }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
         with:
           distribution: ${{ needs.params.outputs.ci_distribution }}
           java-version: ${{ needs.params.outputs.ci_java_version }}
@@ -156,6 +159,10 @@ jobs:
           LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
 
       - name: FIPS 140-3 crypto provider tests
+        # Always run when running on Corretto (ACCP requires Corretto JVM).
+        # If a downstream repository overrides ci.distribution to a different
+        # JDK distribution, this step is skipped and the FipsCryptoConfigTest
+        # remains gated by its @EnabledIf("isACCPAvailable") condition.
         if: needs.params.outputs.ci_distribution == 'corretto'
         run: |
           mvn -B -ntp -Drevision=${{ needs.params.outputs.version }} test \
@@ -167,7 +174,7 @@ jobs:
         run: mvn -B -ntp -Drevision=${{ needs.params.outputs.version }} package -DskipTests -q
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: jacoco-report
@@ -176,7 +183,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom-cyclonedx
           path: target/classes/META-INF/sbom/application.cdx.json
@@ -188,19 +195,19 @@ jobs:
     if: needs.params.outputs.sonar_enabled == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
         with:
           distribution: ${{ needs.params.outputs.ci_distribution }}
           java-version: ${{ needs.params.outputs.ci_java_version }}
           cache: maven
 
       - name: Download coverage
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: jacoco-report
           path: target/site/jacoco
@@ -225,10 +232,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
         with:
           distribution: ${{ needs.params.outputs.ci_distribution }}
           java-version: ${{ needs.params.outputs.ci_java_version }}
@@ -245,7 +252,7 @@ jobs:
 
       - name: Restore OWASP Dependency-Check data
         id: owasp-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .dependency-check-data
           key: ${{ steps.owasp-cache-key.outputs.key }}
@@ -309,7 +316,7 @@ jobs:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
       - name: Upload OWASP report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: dependency-check-report
@@ -343,7 +350,7 @@ jobs:
 
       - name: Save OWASP Dependency-Check data
         if: always() && steps.owasp-data.outputs.present == 'true' && steps.owasp-data.outputs.cacheable == 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .dependency-check-data
           key: ${{ steps.owasp-cache-key.outputs.key }}
@@ -356,7 +363,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Build Docker image
         uses: pauszek/fsamp-code-ci/.github/actions/docker-build@main
@@ -370,7 +377,7 @@ jobs:
       - name: Save image artifact
         run: docker save ${{ needs.params.outputs.docker_image_name }}:scan | gzip > docker-image.tar.gz
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: docker-image
           path: docker-image.tar.gz
@@ -384,9 +391,9 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: docker-image
 
@@ -415,7 +422,7 @@ jobs:
       id-token: write
       packages: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Build and push
         uses: pauszek/fsamp-code-ci/.github/actions/docker-build@main
@@ -433,7 +440,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
@@ -455,7 +462,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
@@ -478,14 +485,14 @@ jobs:
     steps:
       - name: Generate GitHub App Token
         id: app-token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
         with:
           app-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}
           repositories: fsamp-infra,fsamp-gateway,fsamp-processor
 
       - name: Checkout fsamp-infra
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           repository: pauszek/fsamp-infra
           ref: main
@@ -493,12 +500,12 @@ jobs:
           path: infra
 
       - name: Checkout this repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           path: this-repo
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
         with:
           java-version: '21'
           distribution: 'temurin'
