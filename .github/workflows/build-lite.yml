@@ -101,13 +101,16 @@ jobs:
       - name: Verify schemaVersion alignment
         if: steps.detect.outputs.has_schema == 'true'
         shell: bash
+        env:
+          VERSION_FILE: ${{ needs.params.outputs.files_version }}
         run: |
           set -euo pipefail
           schema_version=$(python -c \
             "import json,sys; d=json.load(open('event.schema.json')); \
             v=d.get('properties',{}).get('schemaVersion',{}).get('const'); \
             print(v) if v else sys.exit('missing schemaVersion const')")
-          release_version=$(tr -d '[:space:]' < release.version)
+          [[ -s "${VERSION_FILE}" ]] || { echo "version file '${VERSION_FILE}' not found or empty"; exit 1; }
+          release_version=$(tr -d '[:space:]' < "${VERSION_FILE}")
           python - "${schema_version}" "${release_version%%-*}" <<'PY'
           import re
           import sys
@@ -123,10 +126,10 @@ jobs:
 
           if parse_version(release_version) < parse_version(schema_version):
               raise SystemExit(
-                  f"schemaVersion={schema_version} but release.version={release_version}"
+                  f"schemaVersion={schema_version} but release version={release_version}"
               )
 
-          print(f"schemaVersion {schema_version} aligned with release.version {release_version}")
+          print(f"schemaVersion {schema_version} aligned with release version {release_version}")
           PY
 
   tag_and_release:

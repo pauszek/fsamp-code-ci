@@ -167,6 +167,29 @@ jobs:
               'Terraform configuration to reflect the intentional change.',
             ].join('\n');
 
+            async function ensureLabel(name) {
+              try {
+                await github.rest.issues.getLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name,
+                });
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name,
+                  color: 'b60205',
+                  description: 'Terraform drift detection finding',
+                });
+              }
+            }
+
+            await ensureLabel(label);
+
             const existing = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -189,7 +212,7 @@ jobs:
                 repo: context.repo.repo,
                 title: title,
                 body: body,
-                labels: [label, env],
+                labels: [label],
               });
               core.notice(`Opened drift issue #${created.data.number}`);
             }
@@ -203,6 +226,19 @@ jobs:
             const label = '${{ inputs.issue_label }}';
             const expectedDrift = `Configuration drift detected in ${env}`;
             const expectedError = `Drift detection failed for ${env}`;
+            try {
+              await github.rest.issues.getLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: label,
+              });
+            } catch (error) {
+              if (error.status === 404) {
+                core.notice(`No drift label '${label}' exists; nothing to close.`);
+                return;
+              }
+              throw error;
+            }
             const existing = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
               repo: context.repo.repo,
