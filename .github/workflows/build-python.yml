@@ -161,7 +161,7 @@ jobs:
 
       - name: Integration tests
         run: |
-          pip install testcontainers[localstack]
+          pip install 'testcontainers[localstack]'
           pytest -m integration -v --tb=short
         env:
           LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
