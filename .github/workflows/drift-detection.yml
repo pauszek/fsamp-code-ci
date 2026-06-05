@@ -1,0 +1,235 @@
+name: Terraform Drift Detection
+
+# Reusable workflow that runs `terraform plan -detailed-exitcode` against
+# a deployed environment and opens (or comments on) a GitHub issue when
+# drift is detected. Intended to be invoked on a schedule from each
+# infrastructure repository to satisfy FedRAMP CM-3 (Configuration Change
+# Control) and CM-6 (Configuration Settings).
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Target environment to plan against (dev, staging, prod).'
+        required: true
+        type: string
+      terraform_version:
+        description: 'Terraform version to use.'
+        required: false
+        type: string
+        default: '1.7.5'
+      working_directory:
+        description: 'Working directory for terraform commands.'
+        required: false
+        type: string
+        default: 'terraform'
+      aws_region:
+        description: 'AWS region (primary) for the environment.'
+        required: false
+        type: string
+        default: 'us-west-2'
+      backend_bucket:
+        description: 'S3 bucket holding Terraform state.'
+        required: true
+        type: string
+      backend_dynamodb_table:
+        description: 'DynamoDB table holding Terraform state lock.'
+        required: true
+        type: string
+      backend_key:
+        description: 'S3 object key (path) for the environment state file.'
+        required: true
+        type: string
+      tfvars_file:
+        description: 'Optional .tfvars file path (relative to working_directory).'
+        required: false
+        type: string
+        default: ''
+      issue_label:
+        description: 'Label used to identify drift issues.'
+        required: false
+        type: string
+        default: 'terraform-drift'
+
+    secrets:
+      AWS_DEPLOY_ROLE_ARN:
+        description: 'IAM role assumed via OIDC for read-only plan.'
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+  issues: write
+
+jobs:
+  drift:
+    name: Detect drift in ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Configure AWS credentials (OIDC, read-only)
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: drift-detection-${{ inputs.environment }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Terraform init (read-only backend)
+        working-directory: ${{ inputs.working_directory }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ inputs.backend_bucket }}" \
+            -backend-config="key=${{ inputs.backend_key }}" \
+            -backend-config="region=${{ inputs.aws_region }}" \
+            -backend-config="dynamodb_table=${{ inputs.backend_dynamodb_table }}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform plan (-detailed-exitcode)
+        id: plan
+        working-directory: ${{ inputs.working_directory }}
+        shell: bash
+        run: |
+          set +e
+          var_file_arg=""
+          if [[ -n "${{ inputs.tfvars_file }}" ]]; then
+            var_file_arg="-var-file=${{ inputs.tfvars_file }}"
+          fi
+          terraform plan -input=false -refresh=true ${var_file_arg} \
+            -detailed-exitcode -no-color -lock-timeout=300s \
+            -out=drift.tfplan > plan.txt 2>&1
+          exit_code=$?
+          echo "exit_code=${exit_code}" >> "$GITHUB_OUTPUT"
+          # Truncate plan output to avoid blowing the issue body limit.
+          head -c 60000 plan.txt > plan-truncated.txt || true
+          if [[ "${exit_code}" -eq 0 ]]; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${exit_code}" -eq 2 ]]; then
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=error" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload plan artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: terraform-plan-${{ inputs.environment }}
+          path: |
+            ${{ inputs.working_directory }}/plan.txt
+            ${{ inputs.working_directory }}/drift.tfplan
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Open or update drift issue
+        if: steps.plan.outputs.drift == 'true' || steps.plan.outputs.drift == 'error'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const env = '${{ inputs.environment }}';
+            const driftStatus = '${{ steps.plan.outputs.drift }}';
+            const planPath = path.join('${{ inputs.working_directory }}', 'plan-truncated.txt');
+            const planExists = fs.existsSync(planPath);
+            const planBody = planExists ? fs.readFileSync(planPath, 'utf8') : '(plan output unavailable)';
+
+            const title = driftStatus === 'error'
+              ? `Drift detection failed for ${env}`
+              : `Configuration drift detected in ${env}`;
+
+            const label = '${{ inputs.issue_label }}';
+
+            const body = [
+              `Drift detection workflow has flagged \`${env}\` (status: \`${driftStatus}\`).`,
+              '',
+              `**Run:** ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+              `**Commit:** \`${process.env.GITHUB_SHA}\``,
+              '',
+              '<details><summary>Plan output (truncated)</summary>',
+              '',
+              '```hcl',
+              planBody,
+              '```',
+              '',
+              '</details>',
+              '',
+              'FedRAMP CM-3 / CM-6: this issue must be triaged within 24h. Either run',
+              '`terraform apply` from the deploy workflow to reconcile or update the',
+              'Terraform configuration to reflect the intentional change.',
+            ].join('\n');
+
+            const existing = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+            });
+            const match = existing.find(i => i.title === title);
+
+            if (match) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: match.number,
+                body: body,
+              });
+              core.notice(`Updated existing drift issue #${match.number}`);
+            } else {
+              const created = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: [label, env],
+              });
+              core.notice(`Opened drift issue #${created.data.number}`);
+            }
+
+      - name: Close stale drift issue when state is clean
+        if: steps.plan.outputs.drift == 'false'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const env = '${{ inputs.environment }}';
+            const label = '${{ inputs.issue_label }}';
+            const expectedDrift = `Configuration drift detected in ${env}`;
+            const expectedError = `Drift detection failed for ${env}`;
+            const existing = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+            });
+            for (const issue of existing) {
+              if (issue.title === expectedDrift || issue.title === expectedError) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  body: `Drift cleared by run ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}.`,
+                });
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  state: 'closed',
+                  state_reason: 'completed',
+                });
+                core.notice(`Closed cleared drift issue #${issue.number}`);
+              }
+            }
+
+      - name: Fail if plan errored
+        if: steps.plan.outputs.drift == 'error'
+        run: |
+          echo "::error::Terraform plan failed (exit_code=${{ steps.plan.outputs.exit_code }}). See plan artifact for details."
+          exit 1

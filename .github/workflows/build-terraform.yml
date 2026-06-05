@@ -23,7 +23,7 @@ jobs:
       tf_working_directory: ${{ steps.out.outputs.tf_working_directory }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
@@ -67,12 +67,12 @@ jobs:
         working-directory: ${{ needs.params.outputs.tf_working_directory }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: "1.7.4"
 
@@ -108,7 +108,7 @@ jobs:
           fi
 
       - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v4
+        uses: terraform-linters/setup-tflint@90f302c255ef959cbfb4bd10581afecdb7ece3e6 # v4
 
       - name: TFLint Init
         run: tflint --init
@@ -117,7 +117,7 @@ jobs:
         run: tflint --recursive
 
       - name: Run Checkov (Security Scan)
-        uses: bridgecrewio/checkov-action@v12
+        uses: bridgecrewio/checkov-action@b75da993a1a8b73d1086c8d330cadeee5bcccb31 # v12
         with:
           directory: ${{ needs.params.outputs.tf_working_directory }}
           framework: terraform
@@ -139,7 +139,7 @@ jobs:
       full_release: ${{ steps.cfg.outputs.full_release }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
@@ -169,7 +169,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
