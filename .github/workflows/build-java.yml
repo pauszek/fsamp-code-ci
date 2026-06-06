@@ -40,6 +40,7 @@ jobs:
       docker_registry: ${{ steps.out.outputs.docker_registry }}
       docker_dockerfile: ${{ steps.out.outputs.docker_dockerfile }}
       docker_platforms: ${{ steps.out.outputs.docker_platforms }}
+      docker_runner: ${{ steps.out.outputs.docker_runner }}
       sonar_enabled: ${{ steps.out.outputs.sonar_enabled }}
       sonar_organization: ${{ steps.out.outputs.sonar_organization }}
       sonar_project_key: ${{ steps.out.outputs.sonar_project_key }}
@@ -88,7 +89,8 @@ jobs:
           w("docker_image_name", docker.get("image-name", ""))
           w("docker_registry", docker.get("registry", "ghcr.io"))
           w("docker_dockerfile", docker.get("dockerfile", "Dockerfile"))
-          w("docker_platforms", docker.get("platforms", "linux/amd64"))
+          w("docker_platforms", docker.get("platforms", "linux/arm64"))
+          w("docker_runner", docker.get("runner", "ubuntu-24.04-arm"))
           w("sonar_enabled", str(sonar.get("enabled", False)).lower())
           w("sonar_organization", sonar.get("organization", ""))
           w("sonar_project_key", sonar.get("project-key", ""))
@@ -102,7 +104,7 @@ jobs:
   build:
     name: Build and Test
     needs: params
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.params.outputs.docker_runner }}
     permissions:
       contents: read
     steps:
@@ -365,7 +367,7 @@ jobs:
     name: Build Image
     needs: [ params, build ]
     if: needs.params.outputs.docker_enabled == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.params.outputs.docker_runner }}
     permissions:
       contents: read
       packages: write
@@ -379,6 +381,7 @@ jobs:
           dockerfile: ${{ needs.params.outputs.docker_dockerfile }}
           version: ${{ needs.params.outputs.version }}
           registry: ${{ needs.params.outputs.docker_registry }}
+          platforms: ${{ needs.params.outputs.docker_platforms }}
           push: 'false'
 
       - name: Save image artifact
@@ -393,7 +396,7 @@ jobs:
     name: Security Scan
     needs: [ params, docker-build ]
     if: needs.params.outputs.docker_enabled == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.params.outputs.docker_runner }}
     permissions:
       contents: read
       security-events: write
@@ -423,7 +426,7 @@ jobs:
       github.ref_name == needs.params.outputs.bump_base_branch &&
       needs.security-scan.result == 'success' &&
       needs.e2e-tests.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.params.outputs.docker_runner }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -489,7 +492,7 @@ jobs:
     if: |
       needs.params.outputs.docker_enabled == 'true' && 
       needs.security-scan.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ needs.params.outputs.docker_runner }}
     timeout-minutes: 20
     steps:
       - name: Generate GitHub App Token
