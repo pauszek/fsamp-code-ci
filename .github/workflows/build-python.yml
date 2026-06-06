@@ -243,14 +243,14 @@ jobs:
           cyclonedx-py environment --output-format JSON --output-file bom.json
 
       - name: Upload coverage
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-report
           path: coverage.xml
           retention-days: 1
 
       - name: Upload SBOM
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom-cyclonedx
           path: bom.json
@@ -258,7 +258,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload pip-audit report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: pip-audit-report
@@ -267,7 +267,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload bandit report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: bandit-report
@@ -276,7 +276,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload safety report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: safety-report
@@ -342,7 +342,7 @@ jobs:
       - name: Save image artifact
         run: docker save ${{ needs.params.outputs.docker_image_name }}:scan | gzip > docker-image.tar.gz
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: docker-image
           path: docker-image.tar.gz
