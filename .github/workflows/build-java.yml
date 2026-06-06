@@ -257,7 +257,7 @@ jobs:
 
       - name: Restore OWASP Dependency-Check data
         id: owasp-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .dependency-check-data
           key: ${{ steps.owasp-cache-key.outputs.key }}
@@ -359,7 +359,7 @@ jobs:
 
       - name: Save OWASP Dependency-Check data
         if: always() && steps.owasp-data.outputs.present == 'true' && steps.owasp-data.outputs.cacheable == 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .dependency-check-data
           key: ${{ steps.owasp-cache-key.outputs.key }}
