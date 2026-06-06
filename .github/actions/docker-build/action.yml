@@ -27,7 +27,7 @@ inputs:
   platforms:
     description: 'Target platforms'
     required: false
-    default: 'linux/amd64'
+    default: 'linux/arm64'
   build-args:
     description: 'Docker build arguments'
     required: false
@@ -74,7 +74,7 @@ runs:
       with:
         context: ${{ inputs.context }}
         file: ${{ inputs.dockerfile }}
-        platforms: linux/amd64
+        platforms: ${{ inputs.platforms }}
         push: false
         load: true
         tags: ${{ inputs.image-name }}:scan
