@@ -31,13 +31,13 @@ runs:
   steps:
     - name: Generate GitHub App Token
       id: app-token
-      uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+      uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
       with:
         app-id: ${{ inputs['app-id'] }}
         private-key: ${{ inputs['private-key'] }}
 
     - name: Checkout triggering commit
-      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       with:
         fetch-depth: 0
         ref: ${{ github.sha }}
@@ -65,7 +65,7 @@ runs:
 
     - name: Create PR
       id: cpr
-      uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
+      uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
       with:
         token: ${{ steps.app-token.outputs.token }}
         commit-message: "[skip ci] chore: bump release.version to ${{ steps.bump.outputs.new }}"
