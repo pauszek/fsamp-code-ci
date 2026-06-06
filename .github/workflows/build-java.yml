@@ -229,6 +229,7 @@ jobs:
     name: OWASP Dependency-Check
     needs: [ params, build ]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -275,6 +276,7 @@ jobs:
 
       - name: OWASP Dependency-Check
         shell: bash
+        timeout-minutes: 40
         run: |
           set -o pipefail
 
@@ -282,9 +284,10 @@ jobs:
             nvd_delay="${NVD_API_DELAY:-1000}"
             echo "NVD API key configured: yes"
           else
-            nvd_delay="${NVD_API_DELAY:-12000}"
-            echo "::warning::NVD_API_KEY is not configured; Dependency-Check NVD updates will be much slower."
+            nvd_delay="${NVD_API_DELAY:-8000}"
+            echo "::warning title=Missing NVD_API_KEY::Configure the NVD_API_KEY repository or organization secret to avoid slow OWASP Dependency-Check NVD updates."
           fi
+          nvd_max_retry_count="${NVD_MAX_RETRY_COUNT:-10}"
 
           run_dependency_check() {
             mvn -B -ntp \
@@ -292,7 +295,7 @@ jobs:
               -DdataDirectory="${PWD}/.dependency-check-data" \
               -DnvdApiKeyEnvironmentVariable=NVD_API_KEY \
               -DnvdApiDelay="${nvd_delay}" \
-              -DnvdMaxRetryCount=20 \
+              -DnvdMaxRetryCount="${nvd_max_retry_count}" \
               -DnvdValidForHours=24 \
               verify -DskipTests -Psecurity 2>&1 | tee dependency-check-maven.log
           }
@@ -314,6 +317,8 @@ jobs:
           exit "$status"
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+          NVD_API_DELAY: ${{ vars.NVD_API_DELAY }}
+          NVD_MAX_RETRY_COUNT: ${{ vars.NVD_MAX_RETRY_COUNT }}
 
       - name: Upload OWASP report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
