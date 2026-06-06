@@ -35,6 +35,7 @@ jobs:
       docker_image_name: ${{ steps.out.outputs.docker_image_name }}
       docker_registry: ${{ steps.out.outputs.docker_registry }}
       docker_dockerfile: ${{ steps.out.outputs.docker_dockerfile }}
+      docker_platforms: ${{ steps.out.outputs.docker_platforms }}
       sonar_enabled: ${{ steps.out.outputs.sonar_enabled }}
       sonar_organization: ${{ steps.out.outputs.sonar_organization }}
       sonar_project_key: ${{ steps.out.outputs.sonar_project_key }}
@@ -82,6 +83,7 @@ jobs:
           w("docker_image_name", docker.get("image-name", ""))
           w("docker_registry", docker.get("registry", "ghcr.io"))
           w("docker_dockerfile", docker.get("dockerfile", "Dockerfile"))
+          w("docker_platforms", docker.get("platforms", "linux/amd64"))
           w("sonar_enabled", str(sonar.get("enabled", False)).lower())
           w("sonar_organization", sonar.get("organization", ""))
           w("sonar_project_key", sonar.get("project-key", ""))
@@ -392,6 +394,7 @@ jobs:
           dockerfile: ${{ needs.params.outputs.docker_dockerfile }}
           version: ${{ needs.params.outputs.version }}
           registry: ${{ needs.params.outputs.docker_registry }}
+          platforms: ${{ needs.params.outputs.docker_platforms }}
           push: 'true'
   tag-release:
     name: Tag and Release
