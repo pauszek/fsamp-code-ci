@@ -25,9 +25,9 @@ inputs:
     required: false
     default: 'true'
   platforms:
-    description: 'Target platforms for multi-arch build'
+    description: 'Target platforms'
     required: false
-    default: 'linux/amd64,linux/arm64'
+    default: 'linux/amd64'
   build-args:
     description: 'Docker build arguments'
     required: false
