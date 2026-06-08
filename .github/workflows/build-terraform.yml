@@ -117,7 +117,7 @@ jobs:
         run: tflint --recursive
 
       - name: Run Checkov (Security Scan)
-        uses: bridgecrewio/checkov-action@b75da993a1a8b73d1086c8d330cadeee5bcccb31 # v12
+        uses: bridgecrewio/checkov-action@dfb51aed1b783289b0d3f255028e7a88d5e8caa1 # v12
         with:
           directory: ${{ needs.params.outputs.tf_working_directory }}
           framework: terraform
