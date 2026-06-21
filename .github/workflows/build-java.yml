@@ -436,16 +436,17 @@ jobs:
 
           owasp_auto_update="${OWASP_AUTO_UPDATE:-}"
           if [[ -z "${owasp_auto_update}" ]]; then
-            if [[ "${OWASP_CACHE_PRESENT}" == "true" ]]; then
-              owasp_auto_update="false"
-            else
-              owasp_auto_update="true"
-            fi
+            owasp_auto_update="false"
           fi
 
           if [[ "${owasp_auto_update}" != "true" && "${owasp_auto_update}" != "false" ]]; then
             echo "::error title=Invalid OWASP_AUTO_UPDATE::OWASP_AUTO_UPDATE must be true or false."
             exit 1
+          fi
+
+          if [[ "${OWASP_CACHE_PRESENT}" != "true" && "${owasp_auto_update}" == "false" ]]; then
+            echo "::warning title=OWASP cache missing::No restored Dependency-Check data is available. Skipping live NVD refresh; set OWASP_AUTO_UPDATE=true to force a cache warmup run."
+            exit 0
           fi
 
           if [[ "${owasp_auto_update}" == "false" ]]; then
