@@ -193,7 +193,7 @@ jobs:
           echo "full_release=${FULL:-false}" >> "$GITHUB_OUTPUT"
 
       - name: Tag and (pre)-release
-        uses: pauszek/fsamp-code-ci/.github/actions/tag-and-release@main
+        uses: pauszek/fsamp-code-ci/.github/actions/tag-and-release@f2403eed5b5a9f172474b102eea06c465a5bff18
         with:
           version-file: ${{ needs.params.outputs.files_version }}
           full_release: ${{ steps.cfg.outputs.full_release }}
@@ -214,7 +214,7 @@ jobs:
           fetch-depth: 0
 
       - name: Bump release.version via PR
-        uses: pauszek/fsamp-code-ci/.github/actions/bump-release-version@main
+        uses: pauszek/fsamp-code-ci/.github/actions/bump-release-version@f2403eed5b5a9f172474b102eea06c465a5bff18
         with:
           app-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}
