@@ -71,6 +71,8 @@ runs:
 
     - name: Build Docker image (local)
       uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+      env:
+        DOCKER_BUILD_RECORD_UPLOAD: "false"
       with:
         context: ${{ inputs.context }}
         file: ${{ inputs.dockerfile }}
@@ -80,12 +82,14 @@ runs:
         tags: ${{ inputs.image-name }}:scan
         build-args: ${{ inputs.build-args }}
         cache-from: type=gha
-        cache-to: type=gha,mode=max
+        cache-to: type=gha,mode=min
 
     - name: Build and push to registry
       id: build
       if: inputs.push == 'true'
       uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+      env:
+        DOCKER_BUILD_RECORD_UPLOAD: "false"
       with:
         context: ${{ inputs.context }}
         file: ${{ inputs.dockerfile }}
@@ -95,7 +99,7 @@ runs:
         labels: ${{ steps.meta.outputs.labels }}
         build-args: ${{ inputs.build-args }}
         cache-from: type=gha
-        cache-to: type=gha,mode=max
+        cache-to: type=gha,mode=min
         provenance: true
         sbom: true
 
@@ -167,7 +171,7 @@ runs:
       with:
         name: ${{ steps.sbom-artifact.outputs.name }}
         path: sbom.cdx.json
-        retention-days: 90
+        retention-days: 14
         if-no-files-found: warn
 
     - name: Verify attestation visibility
