@@ -141,6 +141,8 @@ jobs:
         run: |
           mkdir -p schema
           cp schema-repo/event.schema.json schema/
+          # Fail fast so contract tests can never skip silently (SA-11).
+          test -f schema/event.schema.json
 
       - name: Setup Python ${{ needs.params.outputs.ci_python_version }}
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
@@ -151,9 +153,22 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
-          [[ -f requirements-dev.txt ]] && pip install -r requirements-dev.txt || true
-          pip install -e .
+          # Prefer hash-pinned lockfiles when present (reproducible,
+          # tamper-evident installs - SR-3/SR-4); otherwise fall back to the
+          # plain requirement files. With a lock the project is installed
+          # --no-deps because the lock already pins the full closure.
+          if [[ -f requirements.lock ]]; then
+            pip install --require-hashes -r requirements.lock
+            pip install --no-deps -e .
+          else
+            pip install -r requirements.txt
+            pip install -e .
+          fi
+          if [[ -f requirements-dev.lock ]]; then
+            pip install --require-hashes -r requirements-dev.lock
+          elif [[ -f requirements-dev.txt ]]; then
+            pip install -r requirements-dev.txt
+          fi
 
       - name: Lint with Ruff
         run: |
@@ -212,8 +227,18 @@ jobs:
 
           audit_args=(--strict --desc)
           requirement_args=()
-          [[ -f requirements.txt ]] && requirement_args+=(-r requirements.txt)
-          [[ -f requirements-dev.txt ]] && requirement_args+=(-r requirements-dev.txt)
+          # Audit the resolved lockfile pins when available - a pinned audit
+          # is a stronger RA-5 signal than auditing >= ranges.
+          if [[ -f requirements.lock ]]; then
+            requirement_args+=(-r requirements.lock)
+          elif [[ -f requirements.txt ]]; then
+            requirement_args+=(-r requirements.txt)
+          fi
+          if [[ -f requirements-dev.lock ]]; then
+            requirement_args+=(-r requirements-dev.lock)
+          elif [[ -f requirements-dev.txt ]]; then
+            requirement_args+=(-r requirements-dev.txt)
+          fi
 
           if (( ${#requirement_args[@]} > 0 )); then
             pip-audit "${audit_args[@]}" "${requirement_args[@]}" \
@@ -290,6 +315,74 @@ jobs:
         with:
           files: coverage.xml
           fail_ci_if_error: false
+
+  secret-scan:
+    name: Secret Scan (gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Scan git history for secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="8.30.1"
+          case "$(uname -m)" in
+            x86_64)        arch="x64";   sha256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb" ;;
+            aarch64|arm64) arch="arm64"; sha256="e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080" ;;
+            *) echo "::error::Unsupported runner architecture: $(uname -m)"; exit 1 ;;
+          esac
+
+          tarball="gitleaks_${version}_linux_${arch}.tar.gz"
+          curl -sSfL --retry 3 -o "/tmp/${tarball}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${version}/${tarball}"
+          echo "${sha256}  /tmp/${tarball}" | sha256sum -c -
+          tar -xzf "/tmp/${tarball}" -C /tmp gitleaks
+
+          /tmp/gitleaks git --redact --report-format json --report-path gitleaks-report.json .
+
+      - name: Upload gitleaks report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: gitleaks-report
+          path: gitleaks-report.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Run Semgrep (CE)
+        run: |
+          set -euo pipefail
+          pipx install semgrep==1.165.0
+          semgrep scan --metrics=off --severity ERROR \
+            --config p/security-audit --config p/python \
+            --json --output semgrep-report.json || true
+          semgrep scan --metrics=off --error --severity ERROR \
+            --config p/security-audit --config p/python
+
+      - name: Upload semgrep report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: semgrep-report
+          path: semgrep-report.json
+          retention-days: 7
+          if-no-files-found: ignore
   sonar:
     name: SonarCloud
     needs: [ params, build ]
@@ -320,7 +413,7 @@ jobs:
             -Dsonar.coverage.exclusions=**/__init__.py
   docker-build:
     name: Build and Scan Image
-    needs: [ params, build ]
+    needs: [ params, build, secret-scan, semgrep ]
     if: needs.params.outputs.docker_enabled == 'true'
     runs-on: ${{ needs.params.outputs.docker_runner }}
     permissions:
@@ -381,7 +474,7 @@ jobs:
           push: 'true'
   tag-release:
     name: Tag and Release
-    needs: [ params, build ]
+    needs: [ params, build, secret-scan, semgrep ]
     if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
     runs-on: ubuntu-latest
     permissions:
