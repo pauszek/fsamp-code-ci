@@ -363,7 +363,7 @@ jobs:
     name: OWASP Dependency-Check
     needs: [ params, build ]
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: read
     steps:
@@ -410,7 +410,7 @@ jobs:
 
       - name: OWASP Dependency-Check
         shell: bash
-        timeout-minutes: 40
+        timeout-minutes: 80
         run: |
           set -o pipefail
 
