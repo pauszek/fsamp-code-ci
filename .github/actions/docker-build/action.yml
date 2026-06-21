@@ -32,10 +32,6 @@ inputs:
     description: 'Docker build arguments'
     required: false
     default: ''
-  upload-sbom-artifact:
-    description: 'Upload the generated SBOM as a workflow artifact in addition to the signed registry attestation'
-    required: false
-    default: 'false'
 
 outputs:
   image:
@@ -156,28 +152,6 @@ runs:
           --predicate sbom.cdx.json \
           --type cyclonedx \
           "${IMAGE_REF}@${DIGEST}"
-
-    - name: Prepare SBOM artifact name
-      id: sbom-artifact
-      if: inputs.push == 'true' && steps.build.outputs.digest != '' && inputs['upload-sbom-artifact'] == 'true'
-      shell: bash
-      env:
-        IMAGE_NAME: ${{ inputs.image-name }}
-        VERSION: ${{ inputs.version }}
-      run: |
-        safe_image=$(printf '%s' "${IMAGE_NAME}" | sed -E 's#[^A-Za-z0-9._-]+#-#g; s#^-+|-+$##g')
-        safe_version=$(printf '%s' "${VERSION}" | sed -E 's#[^A-Za-z0-9._-]+#-#g; s#^-+|-+$##g')
-        echo "name=sbom-${safe_image:-image}-${safe_version:-version}" >> "$GITHUB_OUTPUT"
-
-    - name: Upload SBOM as workflow artifact
-      if: inputs.push == 'true' && steps.build.outputs.digest != '' && inputs['upload-sbom-artifact'] == 'true'
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      continue-on-error: true
-      with:
-        name: ${{ steps.sbom-artifact.outputs.name }}
-        path: sbom.cdx.json
-        retention-days: 14
-        if-no-files-found: warn
 
     - name: Verify attestation visibility
       if: inputs.push == 'true' && steps.build.outputs.digest != ''
