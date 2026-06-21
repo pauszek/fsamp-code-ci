@@ -12,6 +12,9 @@ on:
       LOCALSTACK_AUTH_TOKEN:
         description: LocalStack Pro token for E2E tests
         required: false
+      CODECOV_TOKEN:
+        description: Codecov upload token. When omitted, coverage remains available as a short-lived workflow artifact.
+        required: false
 
 permissions:
   contents: read
@@ -102,6 +105,8 @@ jobs:
     runs-on: ${{ needs.params.outputs.docker_runner }}
     permissions:
       contents: read
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -311,10 +316,11 @@ jobs:
 
       - name: Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        if: always()
+        if: env.CODECOV_TOKEN != ''
         with:
           files: coverage.xml
           fail_ci_if_error: false
+          token: ${{ env.CODECOV_TOKEN }}
 
   secret-scan:
     name: Secret Scan (gitleaks)
