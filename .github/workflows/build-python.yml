@@ -254,7 +254,7 @@ jobs:
         with:
           name: sbom-cyclonedx
           path: bom.json
-          retention-days: 90
+          retention-days: 14
           if-no-files-found: warn
 
       - name: Upload pip-audit report
@@ -263,7 +263,7 @@ jobs:
         with:
           name: pip-audit-report
           path: pip-audit-report.json
-          retention-days: 30
+          retention-days: 7
           if-no-files-found: ignore
 
       - name: Upload bandit report
@@ -272,7 +272,7 @@ jobs:
         with:
           name: bandit-report
           path: bandit-report.json
-          retention-days: 30
+          retention-days: 7
           if-no-files-found: ignore
 
       - name: Upload safety report
@@ -281,11 +281,11 @@ jobs:
         with:
           name: safety-report
           path: safety-report.json
-          retention-days: 30
+          retention-days: 7
           if-no-files-found: ignore
 
       - name: Codecov
-        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6.0.1
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         if: always()
         with:
           files: coverage.xml
@@ -305,7 +305,7 @@ jobs:
           name: coverage-report
 
       - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
+        uses: SonarSource/sonarqube-scan-action@713881670b6b3676cda39549040e2d88c70d582e # v8.2.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -319,13 +319,13 @@ jobs:
             -Dsonar.python.version=${{ needs.params.outputs.ci_python_version }}
             -Dsonar.coverage.exclusions=**/__init__.py
   docker-build:
-    name: Build Image
+    name: Build and Scan Image
     needs: [ params, build ]
     if: needs.params.outputs.docker_enabled == 'true'
     runs-on: ${{ needs.params.outputs.docker_runner }}
     permissions:
       contents: read
-      packages: write
+      security-events: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
@@ -345,32 +345,6 @@ jobs:
           platforms: ${{ needs.params.outputs.docker_platforms }}
           push: 'false'
 
-      - name: Save image artifact
-        run: docker save ${{ needs.params.outputs.docker_image_name }}:scan | gzip > docker-image.tar.gz
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: docker-image
-          path: docker-image.tar.gz
-          retention-days: 1
-  security-scan:
-    name: Security Scan
-    needs: [ params, docker-build ]
-    if: needs.params.outputs.docker_enabled == 'true'
-    runs-on: ${{ needs.params.outputs.docker_runner }}
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: docker-image
-
-      - name: Load image
-        run: gunzip -c docker-image.tar.gz | docker load
-
       - name: Run Trivy scan
         uses: pauszek/fsamp-code-ci/.github/actions/security-scan@main
         with:
@@ -380,12 +354,12 @@ jobs:
           upload-sarif: 'false'
   docker-push:
     name: Push to Registry
-    needs: [ params, build, docker-build, security-scan, e2e-tests ]
+    needs: [ params, build, docker-build, e2e-tests ]
     if: |
       needs.params.outputs.docker_enabled == 'true' && 
       github.event_name == 'push' && 
       github.ref_name == needs.params.outputs.bump_base_branch &&
-      needs.security-scan.result == 'success' &&
+      needs.docker-build.result == 'success' &&
       needs.e2e-tests.result == 'success'
     runs-on: ${{ needs.params.outputs.docker_runner }}
     timeout-minutes: 30
@@ -449,10 +423,10 @@ jobs:
           label: ${{ needs.params.outputs.bump_label }}
   e2e-tests:
     name: E2E Tests
-    needs: [ params, docker-build, security-scan ]
+    needs: [ params, docker-build ]
     if: |
       needs.params.outputs.docker_enabled == 'true' && 
-      needs.security-scan.result == 'success'
+      needs.docker-build.result == 'success'
     runs-on: ${{ needs.params.outputs.docker_runner }}
     timeout-minutes: 20
     steps:

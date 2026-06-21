@@ -1,0 +1,74 @@
+name: Storage Governance
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Cleanup mode for Actions artifacts and caches
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - apply
+      target_repos:
+        description: Comma-separated owner/repo list; empty discovers fsamp-* repos
+        required: false
+        default: ""
+        type: string
+      artifact_retention_days:
+        description: Delete non-transfer workflow artifacts older than this many days
+        required: true
+        default: "14"
+        type: string
+      cache_retention_days:
+        description: Delete old non-protected caches older than this many days
+        required: true
+        default: "7"
+        type: string
+      include_packages:
+        description: Include package-version dry-run/apply governance
+        required: true
+        default: false
+        type: boolean
+      package_mode:
+        description: Cleanup mode for GitHub Packages versions
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - apply
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  actions: write
+  contents: read
+  packages: read
+
+concurrency:
+  group: storage-governance
+  cancel-in-progress: false
+
+jobs:
+  storage-governance:
+    name: Storage Governance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Run storage governance
+        env:
+          GH_TOKEN: ${{ secrets.FSAMP_MAINTENANCE_TOKEN || github.token }}
+          PACKAGE_CLEANUP_TOKEN: ${{ secrets.FSAMP_PACKAGE_CLEANUP_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'dry-run' }}
+          TARGET_REPOS: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repos || '' }}
+          ARTIFACT_RETENTION_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.artifact_retention_days || '14' }}
+          CACHE_RETENTION_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.cache_retention_days || '7' }}
+          CACHE_MAX_BYTES: "1073741824"
+          INCLUDE_PACKAGES: ${{ github.event_name == 'workflow_dispatch' && inputs.include_packages || 'false' }}
+          PACKAGE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.package_mode || 'dry-run' }}
+        run: scripts/github-storage-cleanup.sh
