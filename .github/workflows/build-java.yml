@@ -422,6 +422,13 @@ jobs:
             echo "::warning title=Missing NVD_API_KEY::Configure the NVD_API_KEY repository or organization secret to avoid slow OWASP Dependency-Check NVD updates."
           fi
           nvd_max_retry_count="${NVD_MAX_RETRY_COUNT:-10}"
+          nvd_valid_for_hours="${NVD_VALID_FOR_HOURS:-336}"
+
+          if ! [[ "${nvd_valid_for_hours}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error title=Invalid NVD_VALID_FOR_HOURS::NVD_VALID_FOR_HOURS must be a positive integer."
+            exit 1
+          fi
+          echo "NVD data valid for hours: ${nvd_valid_for_hours}"
 
           run_dependency_check() {
             mvn -B -ntp \
@@ -430,7 +437,7 @@ jobs:
               -DnvdApiKeyEnvironmentVariable=NVD_API_KEY \
               -DnvdApiDelay="${nvd_delay}" \
               -DnvdMaxRetryCount="${nvd_max_retry_count}" \
-              -DnvdValidForHours=24 \
+              -DnvdValidForHours="${nvd_valid_for_hours}" \
               verify -DskipTests -Psecurity 2>&1 | tee dependency-check-maven.log
           }
 
@@ -453,6 +460,7 @@ jobs:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
           NVD_API_DELAY: ${{ vars.NVD_API_DELAY }}
           NVD_MAX_RETRY_COUNT: ${{ vars.NVD_MAX_RETRY_COUNT }}
+          NVD_VALID_FOR_HOURS: ${{ vars.NVD_VALID_FOR_HOURS }}
 
       - name: Upload OWASP report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
