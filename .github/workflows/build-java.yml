@@ -362,6 +362,7 @@ jobs:
   dependency-check:
     name: OWASP Dependency-Check
     needs: [ params, build ]
+    if: github.event_name != 'push' || github.ref_name != needs.params.outputs.bump_base_branch || vars.OWASP_RUN_ON_DEFAULT_BRANCH == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
