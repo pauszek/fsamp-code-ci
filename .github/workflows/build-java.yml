@@ -396,15 +396,18 @@ jobs:
             dependency-check-${{ runner.os }}-
 
       - name: Inspect restored OWASP Dependency-Check data
+        id: owasp-cache-state
         shell: bash
         run: |
           echo "OWASP cache hit: ${{ steps.owasp-cache.outputs.cache-hit }}"
           echo "OWASP cache matched key: ${{ steps.owasp-cache.outputs.cache-matched-key }}"
           if [[ -d .dependency-check-data ]] && [[ -n "$(find .dependency-check-data -type f -print -quit)" ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
             du -sh .dependency-check-data || true
             find .dependency-check-data -maxdepth 2 -type f | sort | sed -n '1,25p'
             find .dependency-check-data -type f -name "*.lock" -print -delete
           else
+            echo "present=false" >> "$GITHUB_OUTPUT"
             echo "No restored OWASP data found."
           fi
 
@@ -430,10 +433,30 @@ jobs:
           fi
           echo "NVD data valid for hours: ${nvd_valid_for_hours}"
 
+          owasp_auto_update="${OWASP_AUTO_UPDATE:-}"
+          if [[ -z "${owasp_auto_update}" ]]; then
+            if [[ "${OWASP_CACHE_PRESENT}" == "true" ]]; then
+              owasp_auto_update="false"
+            else
+              owasp_auto_update="true"
+            fi
+          fi
+
+          if [[ "${owasp_auto_update}" != "true" && "${owasp_auto_update}" != "false" ]]; then
+            echo "::error title=Invalid OWASP_AUTO_UPDATE::OWASP_AUTO_UPDATE must be true or false."
+            exit 1
+          fi
+
+          if [[ "${owasp_auto_update}" == "false" ]]; then
+            echo "::notice title=OWASP cached scan::Using restored Dependency-Check data without live NVD update. Set OWASP_AUTO_UPDATE=true to force refresh."
+          fi
+          echo "OWASP auto-update: ${owasp_auto_update}"
+
           run_dependency_check() {
             mvn -B -ntp \
               -Drevision=${{ needs.params.outputs.version }} \
               -DdataDirectory="${PWD}/.dependency-check-data" \
+              -DautoUpdate="${owasp_auto_update}" \
               -DnvdApiKeyEnvironmentVariable=NVD_API_KEY \
               -DnvdApiDelay="${nvd_delay}" \
               -DnvdMaxRetryCount="${nvd_max_retry_count}" \
@@ -448,7 +471,7 @@ jobs:
             exit 0
           fi
 
-          if grep -Eiq 'Error updating the NVD Data|NVD Returned Status Code: 429|Unable to access the local database|Unable to obtain an exclusive lock|WriteLockException|NoDataException|database has been closed|odc\.mv\.db|odc\.update\.lock' dependency-check-maven.log; then
+          if [[ "${owasp_auto_update}" == "true" ]] && grep -Eiq 'Error updating the NVD Data|NVD Returned Status Code: 429|Unable to access the local database|Unable to obtain an exclusive lock|WriteLockException|NoDataException|database has been closed|odc\.mv\.db|odc\.update\.lock' dependency-check-maven.log; then
             echo "::warning::Dependency-Check data update failed; clearing cached data and retrying once."
             rm -rf .dependency-check-data
             run_dependency_check
@@ -461,6 +484,8 @@ jobs:
           NVD_API_DELAY: ${{ vars.NVD_API_DELAY }}
           NVD_MAX_RETRY_COUNT: ${{ vars.NVD_MAX_RETRY_COUNT }}
           NVD_VALID_FOR_HOURS: ${{ vars.NVD_VALID_FOR_HOURS }}
+          OWASP_AUTO_UPDATE: ${{ vars.OWASP_AUTO_UPDATE }}
+          OWASP_CACHE_PRESENT: ${{ steps.owasp-cache-state.outputs.present }}
 
       - name: Upload OWASP report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
