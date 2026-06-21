@@ -159,7 +159,7 @@ runs:
 
     - name: Prepare SBOM artifact name
       id: sbom-artifact
-      if: inputs.push == 'true' && steps.build.outputs.digest != '' && inputs.upload-sbom-artifact == 'true'
+      if: inputs.push == 'true' && steps.build.outputs.digest != '' && inputs['upload-sbom-artifact'] == 'true'
       shell: bash
       env:
         IMAGE_NAME: ${{ inputs.image-name }}
@@ -170,7 +170,7 @@ runs:
         echo "name=sbom-${safe_image:-image}-${safe_version:-version}" >> "$GITHUB_OUTPUT"
 
     - name: Upload SBOM as workflow artifact
-      if: inputs.push == 'true' && steps.build.outputs.digest != '' && inputs.upload-sbom-artifact == 'true'
+      if: inputs.push == 'true' && steps.build.outputs.digest != '' && inputs['upload-sbom-artifact'] == 'true'
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       continue-on-error: true
       with:
