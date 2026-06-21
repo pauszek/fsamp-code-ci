@@ -291,6 +291,62 @@ jobs:
           path: target/site/jacoco
         continue-on-error: true
 
+      - name: Inspect coverage report
+        id: coverage
+        shell: bash
+        run: |
+          if [[ -s target/site/jacoco/jacoco.xml ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::JaCoCo artifact is missing; regenerating coverage before SonarCloud analysis."
+          fi
+
+      - name: Check for schema.version
+        if: steps.coverage.outputs.present != 'true'
+        id: schema
+        shell: bash
+        run: |
+          if [[ -f schema.version ]]; then
+            echo "version=$(tr -d '[:space:]' < schema.version)" >> "$GITHUB_OUTPUT"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate GitHub App Token
+        if: steps.coverage.outputs.present != 'true' && steps.schema.outputs.exists == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.GABRBA_APPID }}
+          private-key: ${{ secrets.GABRBA_SECRET }}
+          repositories: fsamp-event-schema
+
+      - name: Checkout event schema
+        if: steps.coverage.outputs.present != 'true' && steps.schema.outputs.exists == 'true'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: pauszek/fsamp-event-schema
+          path: schema-repo
+          ref: v${{ steps.schema.outputs.version }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Setup schema directory
+        if: steps.coverage.outputs.present != 'true' && steps.schema.outputs.exists == 'true'
+        shell: bash
+        run: |
+          mkdir -p schema
+          cp schema-repo/event.schema.json schema/
+          test -f schema/event.schema.json
+
+      - name: Regenerate coverage when artifact is missing
+        if: steps.coverage.outputs.present != 'true'
+        shell: bash
+        run: |
+          mvn -B -ntp -Drevision=${{ needs.params.outputs.version }} test jacoco:report
+          test -s target/site/jacoco/jacoco.xml
+
       - name: SonarCloud Analysis
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
