@@ -412,6 +412,67 @@ jobs:
         with:
           name: coverage-report
 
+      - name: Check for schema.version
+        id: sonar-schema
+        if: hashFiles('coverage.xml') == ''
+        run: |
+          if [[ -f schema.version ]]; then
+            echo "version=$(tr -d '[:space:]' < schema.version)" >> "$GITHUB_OUTPUT"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate GitHub App Token
+        if: hashFiles('coverage.xml') == '' && steps.sonar-schema.outputs.exists == 'true'
+        id: sonar-app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.GABRBA_APPID }}
+          private-key: ${{ secrets.GABRBA_SECRET }}
+          repositories: fsamp-event-schema
+
+      - name: Checkout event schema
+        if: hashFiles('coverage.xml') == '' && steps.sonar-schema.outputs.exists == 'true'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: pauszek/fsamp-event-schema
+          path: schema-repo
+          ref: v${{ steps.sonar-schema.outputs.version }}
+          token: ${{ steps.sonar-app-token.outputs.token }}
+
+      - name: Setup schema directory
+        if: hashFiles('coverage.xml') == '' && steps.sonar-schema.outputs.exists == 'true'
+        run: |
+          mkdir -p schema
+          cp schema-repo/event.schema.json schema/
+          test -f schema/event.schema.json
+
+      - name: Setup Python ${{ needs.params.outputs.ci_python_version }}
+        if: hashFiles('coverage.xml') == ''
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ needs.params.outputs.ci_python_version }}
+          cache: 'pip'
+
+      - name: Generate coverage fallback
+        if: hashFiles('coverage.xml') == ''
+        run: |
+          pip install --upgrade pip
+          if [[ -f requirements.lock ]]; then
+            pip install --require-hashes -r requirements.lock
+            pip install --no-deps -e .
+          else
+            pip install -r requirements.txt
+            pip install -e .
+          fi
+          if [[ -f requirements-dev.lock ]]; then
+            pip install --require-hashes -r requirements-dev.lock
+          elif [[ -f requirements-dev.txt ]]; then
+            pip install -r requirements-dev.txt
+          fi
+          pytest -m "not integration" --cov=src --cov-report=xml --cov-report=term-missing
+
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@713881670b6b3676cda39549040e2d88c70d582e # v8.2.0
         env:
