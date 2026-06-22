@@ -505,7 +505,7 @@ jobs:
           failure-threshold: error
 
       - name: Build Docker image
-        uses: pauszek/fsamp-code-ci/.github/actions/docker-build@8d6ea616a4c8082315c46fd81e02d69815625d01
+        uses: pauszek/fsamp-code-ci/.github/actions/docker-build@1e08349f1015ce0a6894f7929921832449504c35
         with:
           image-name: ${{ needs.params.outputs.docker_image_name }}
           dockerfile: ${{ needs.params.outputs.docker_dockerfile }}
@@ -515,7 +515,7 @@ jobs:
           push: 'false'
 
       - name: Run Trivy scan
-        uses: pauszek/fsamp-code-ci/.github/actions/security-scan@8d6ea616a4c8082315c46fd81e02d69815625d01
+        uses: pauszek/fsamp-code-ci/.github/actions/security-scan@1e08349f1015ce0a6894f7929921832449504c35
         with:
           image-ref: ${{ needs.params.outputs.docker_image_name }}:scan
           severity: 'CRITICAL,HIGH'
@@ -540,7 +540,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Build and push
-        uses: pauszek/fsamp-code-ci/.github/actions/docker-build@8d6ea616a4c8082315c46fd81e02d69815625d01
+        uses: pauszek/fsamp-code-ci/.github/actions/docker-build@1e08349f1015ce0a6894f7929921832449504c35
         with:
           image-name: ${{ needs.params.outputs.docker_image_name }}
           dockerfile: ${{ needs.params.outputs.docker_dockerfile }}
@@ -561,7 +561,7 @@ jobs:
           fetch-depth: 0
 
       - name: Create tag and release
-        uses: pauszek/fsamp-code-ci/.github/actions/tag-and-release@8d6ea616a4c8082315c46fd81e02d69815625d01
+        uses: pauszek/fsamp-code-ci/.github/actions/tag-and-release@1e08349f1015ce0a6894f7929921832449504c35
         with:
           version-file: ${{ needs.params.outputs.files_version }}
           full_release: ${{ needs.params.outputs.release_full_release }}
@@ -583,7 +583,7 @@ jobs:
           fetch-depth: 0
 
       - name: Bump version via PR
-        uses: pauszek/fsamp-code-ci/.github/actions/bump-release-version@8d6ea616a4c8082315c46fd81e02d69815625d01
+        uses: pauszek/fsamp-code-ci/.github/actions/bump-release-version@1e08349f1015ce0a6894f7929921832449504c35
         with:
           app-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}
@@ -626,7 +626,7 @@ jobs:
           docker build --target production --build-arg REQUIRE_FIPS_PROVIDER=false -t ${{ needs.params.outputs.docker_image_name }}:e2e-this .
 
       - name: Run E2E Tests
-        uses: pauszek/fsamp-code-ci/.github/actions/run-e2e@8d6ea616a4c8082315c46fd81e02d69815625d01
+        uses: pauszek/fsamp-code-ci/.github/actions/run-e2e@1e08349f1015ce0a6894f7929921832449504c35
         with:
           image-name: ${{ needs.params.outputs.docker_image_name }}
           this-image: ${{ needs.params.outputs.docker_image_name }}:e2e-this
