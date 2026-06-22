@@ -108,13 +108,13 @@ discover_repos() {
   fi
 
   if gh repo list "$OWNER" --limit 200 --json nameWithOwner \
-      --jq '.[] | select(.nameWithOwner | test("/fsamp-")) | .nameWithOwner' 2>/dev/null | sort -u; then
+      --jq '.[] | select((.nameWithOwner | test("/fsamp-")) and (.nameWithOwner | test("/fsamp-shared-lib$") | not)) | .nameWithOwner' 2>/dev/null | sort -u; then
     return
   fi
 
   local repo
   for repo in fsamp-code-ci fsamp-gateway fsamp-processor fsamp-infra \
-    fsamp-event-schema fsamp-demo-flow fsamp-thesis fsamp-shared-lib; do
+    fsamp-event-schema fsamp-demo-flow fsamp-thesis; do
     printf '%s/%s\n' "$OWNER" "$repo"
   done
 }
