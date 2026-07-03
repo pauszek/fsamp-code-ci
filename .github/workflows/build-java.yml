@@ -466,8 +466,10 @@ jobs:
               verify -DskipTests -Psecurity 2>&1 | tee dependency-check-maven.log
           }
 
-          run_dependency_check
-          status=$?
+          # The step runs with errexit; guard the calls so a failure reaches
+          # the retry logic below instead of terminating the script.
+          status=0
+          run_dependency_check || status=$?
 
           if [[ "$status" -eq 0 ]]; then
             exit 0
@@ -476,8 +478,8 @@ jobs:
           if [[ "${owasp_auto_update}" == "true" ]] && grep -Eiq 'Error updating the NVD Data|NVD Returned Status Code: 429|Unable to access the local database|Unable to obtain an exclusive lock|WriteLockException|NoDataException|database has been closed|odc\.mv\.db|odc\.update\.lock' dependency-check-maven.log; then
             echo "::warning::Dependency-Check data update failed; clearing cached data and retrying once."
             rm -rf .dependency-check-data
-            run_dependency_check
-            exit $?
+            status=0
+            run_dependency_check || status=$?
           fi
 
           exit "$status"
