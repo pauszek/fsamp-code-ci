@@ -40,9 +40,9 @@ outputs:
   digest:
     description: 'Image digest'
     value: ${{ steps.build.outputs.digest }}
-  scan-tag:
-    description: 'Local image tag for scanning'
-    value: ${{ inputs.image-name }}:scan
+  scan-ref:
+    description: 'Exact local tag or immutable registry digest to scan'
+    value: ${{ steps.scan-ref.outputs.value }}
 
 runs:
   using: composite
@@ -70,6 +70,7 @@ runs:
           type=raw,value=${{ inputs.version }}
 
     - name: Build Docker image (local)
+      if: inputs.push != 'true'
       uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
       env:
         DOCKER_BUILD_RECORD_UPLOAD: "false"
@@ -103,6 +104,24 @@ runs:
         provenance: true
         sbom: true
 
+    - name: Select exact image for scanning
+      id: scan-ref
+      shell: bash
+      env:
+        DIGEST: ${{ steps.build.outputs.digest }}
+        IMAGE_NAME: ${{ inputs.image-name }}
+        PUSH: ${{ inputs.push }}
+        TAGS: ${{ steps.meta.outputs.tags }}
+      run: |
+        set -euo pipefail
+        if [[ "$PUSH" == "true" ]]; then
+          test -n "$DIGEST"
+          image_ref="$(printf '%s\n' "$TAGS" | head -n 1)"
+          echo "value=${image_ref}@${DIGEST}" >> "$GITHUB_OUTPUT"
+        else
+          echo "value=${IMAGE_NAME}:scan" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Install cosign
       if: inputs.push == 'true' && steps.build.outputs.digest != ''
       uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
@@ -121,6 +140,7 @@ runs:
         DIGEST: ${{ steps.build.outputs.digest }}
         TAGS: ${{ steps.meta.outputs.tags }}
       run: |
+        set -euo pipefail
         IMAGE_REF=$(echo "${TAGS}" | head -n1)
         echo "Signing image: ${IMAGE_REF}@${DIGEST}"
         cosign sign --yes "${IMAGE_REF}@${DIGEST}"
@@ -133,6 +153,7 @@ runs:
         TAGS: ${{ steps.meta.outputs.tags }}
         DIGEST: ${{ steps.build.outputs.digest }}
       run: |
+        set -euo pipefail
         IMAGE_REF=$(echo "${TAGS}" | head -n1)
         echo "Generating SBOM for ${IMAGE_REF}@${DIGEST}"
         syft "${IMAGE_REF}@${DIGEST}" -o cyclonedx-json > sbom.cdx.json
@@ -146,6 +167,7 @@ runs:
         DIGEST: ${{ steps.build.outputs.digest }}
         TAGS: ${{ steps.meta.outputs.tags }}
       run: |
+        set -euo pipefail
         IMAGE_REF=$(echo "${TAGS}" | head -n1)
         echo "Attaching signed SBOM attestation to ${IMAGE_REF}@${DIGEST}"
         cosign attest --yes \
@@ -158,19 +180,21 @@ runs:
       shell: bash
       env:
         COSIGN_EXPERIMENTAL: "true"
+        CERTIFICATE_IDENTITY: https://github.com/${{ job.workflow_ref }}
         DIGEST: ${{ steps.build.outputs.digest }}
         TAGS: ${{ steps.meta.outputs.tags }}
       run: |
+        set -euo pipefail
         IMAGE_REF=$(echo "${TAGS}" | head -n1)
         echo "Verifying signature and CycloneDX attestation are queryable"
         for attempt in 1 2 3 4 5 6; do
           if cosign verify \
-              --certificate-identity-regexp "https://github.com/${{ github.repository_owner }}/.+" \
+              --certificate-identity "${CERTIFICATE_IDENTITY}" \
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
               "${IMAGE_REF}@${DIGEST}" > /dev/null &&
              cosign verify-attestation \
               --type cyclonedx \
-              --certificate-identity-regexp "https://github.com/${{ github.repository_owner }}/.+" \
+              --certificate-identity "${CERTIFICATE_IDENTITY}" \
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
               "${IMAGE_REF}@${DIGEST}" > /dev/null; then
             exit 0
