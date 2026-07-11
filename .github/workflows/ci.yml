@@ -7,6 +7,72 @@ on:
     branches: [ main ]
 
 jobs:
+  workflow-lint:
+    name: Validate reusable workflows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install actionlint
+        env:
+          GOBIN: ${{ runner.temp }}/bin
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.10
+          echo "${GOBIN}" >> "$GITHUB_PATH"
+
+      - name: Lint workflows and shell scripts
+        run: actionlint -color
+
+      - name: Require immutable action references
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          invalid = []
+          paths = [*pathlib.Path(".github").rglob("*.yml"), *pathlib.Path(".github").rglob("*.yaml")]
+          for path in paths:
+              for number, line in enumerate(path.read_text().splitlines(), 1):
+                  match = re.match(r"^\s*uses:\s*([^\s#]+)", line)
+                  if not match:
+                      continue
+                  target = match.group(1)
+                  if target.startswith("./"):
+                      continue
+                  ref = target.rsplit("@", 1)[-1]
+                  if not re.fullmatch(r"[0-9a-f]{40}", ref):
+                      invalid.append(f"{path}:{number}: {target}")
+
+          if invalid:
+              print("Mutable action references:\n" + "\n".join(invalid))
+              sys.exit(1)
+          PY
+
+      - name: Verify release safeguards
+        run: |
+          set -euo pipefail
+          for workflow in build-java.yml build-python.yml; do
+            path=".github/workflows/${workflow}"
+            grep -q '^  quality-gate:' "$path"
+            grep -q 'needs: \[ params, quality-gate \]' "$path"
+            if grep -q '^  docker-push:' "$path"; then
+              echo "::error::${workflow} rebuilds an image after scanning"
+              exit 1
+            fi
+            [[ "$(grep -c 'actions/docker-build@a2852905e5da5a1088062e97dbaf1f63f8808e7f' "$path")" -eq 1 ]]
+          done
+          grep -q 'clean verify' .github/workflows/build-java.yml
+          grep -q 'python -m mypy src/' .github/workflows/build-python.yml
+          if grep -q 'drift.tfplan' .github/workflows/drift-detection.yml; then
+            echo "::error::Binary Terraform plans must not be retained"
+            exit 1
+          fi
+          grep -q 'plan-sanitized.txt' .github/workflows/drift-detection.yml
+
   build-lite:
     uses: ./.github/workflows/build-lite.yml
     secrets:

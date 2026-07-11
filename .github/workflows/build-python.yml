@@ -180,6 +180,9 @@ jobs:
           pip install ruff
           ruff check src/ tests/ --output-format=github
 
+      - name: Type check with mypy
+        run: python -m mypy src/
+
       - name: Unit tests
         run: pytest -m "not integration" --cov=src --cov-report=xml --cov-report=term-missing
 
@@ -492,8 +495,12 @@ jobs:
     needs: [ params, build, secret-scan, semgrep ]
     if: needs.params.outputs.docker_enabled == 'true'
     runs-on: ${{ needs.params.outputs.docker_runner }}
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
     permissions:
       contents: read
+      id-token: write
+      packages: write
       security-events: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -505,53 +512,120 @@ jobs:
           failure-threshold: error
 
       - name: Build Docker image
-        uses: pauszek/fsamp-code-ci/.github/actions/docker-build@8d6ea616a4c8082315c46fd81e02d69815625d01
+        id: image
+        uses: pauszek/fsamp-code-ci/.github/actions/docker-build@a2852905e5da5a1088062e97dbaf1f63f8808e7f
         with:
           image-name: ${{ needs.params.outputs.docker_image_name }}
           dockerfile: ${{ needs.params.outputs.docker_dockerfile }}
-          version: ${{ needs.params.outputs.version }}
+          version: ${{ needs.params.outputs.version }}-candidate-${{ github.sha }}
           registry: ${{ needs.params.outputs.docker_registry }}
           platforms: ${{ needs.params.outputs.docker_platforms }}
-          push: 'false'
+          push: ${{ github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch }}
 
       - name: Run Trivy scan
         uses: pauszek/fsamp-code-ci/.github/actions/security-scan@8d6ea616a4c8082315c46fd81e02d69815625d01
         with:
-          image-ref: ${{ needs.params.outputs.docker_image_name }}:scan
+          image-ref: ${{ steps.image.outputs.scan-ref }}
           severity: 'CRITICAL,HIGH'
           fail-on-vuln: 'true'
           upload-sarif: 'false'
-  docker-push:
-    name: Push to Registry
+
+  docker-publish:
+    name: Publish Verified Image
     needs: [ params, build, docker-build, e2e-tests ]
     if: |
-      needs.params.outputs.docker_enabled == 'true' && 
-      github.event_name == 'push' && 
+      needs.params.outputs.docker_enabled == 'true' &&
+      github.event_name == 'push' &&
       github.ref_name == needs.params.outputs.bump_base_branch &&
       needs.docker-build.result == 'success' &&
       needs.e2e-tests.result == 'success'
-    runs-on: ${{ needs.params.outputs.docker_runner }}
-    timeout-minutes: 30
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
       packages: write
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Install crane
+        uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
 
-      - name: Build and push
-        uses: pauszek/fsamp-code-ci/.github/actions/docker-build@8d6ea616a4c8082315c46fd81e02d69815625d01
-        with:
-          image-name: ${{ needs.params.outputs.docker_image_name }}
-          dockerfile: ${{ needs.params.outputs.docker_dockerfile }}
-          version: ${{ needs.params.outputs.version }}
-          registry: ${{ needs.params.outputs.docker_registry }}
-          platforms: ${{ needs.params.outputs.docker_platforms }}
-          push: 'true'
+      - name: Promote scanned digest
+        shell: bash
+        env:
+          DIGEST: ${{ needs.docker-build.outputs.digest }}
+          IMAGE_NAME: ${{ needs.params.outputs.docker_image_name }}
+          REGISTRY: ${{ needs.params.outputs.docker_registry }}
+          VERSION: ${{ needs.params.outputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$REGISTRY" == "ghcr.io" ]] || {
+            echo "::error::Registry promotion currently supports ghcr.io only"
+            exit 1
+          }
+          test -n "$DIGEST"
+          repository="${REGISTRY}/${{ github.repository_owner }}/${IMAGE_NAME}"
+          echo "${{ github.token }}" | crane auth login "$REGISTRY" \
+            --username "${{ github.actor }}" --password-stdin
+          crane tag "${repository}@${DIGEST}" "$VERSION"
+          [[ "$(crane digest "${repository}:${VERSION}")" == "$DIGEST" ]]
+
+  quality-gate:
+    name: Release Quality Gate
+    if: always()
+    needs:
+      - params
+      - build
+      - secret-scan
+      - semgrep
+      - sonar
+      - docker-build
+      - e2e-tests
+      - docker-publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all configured checks
+        shell: bash
+        env:
+          BUILD: ${{ needs.build.result }}
+          DOCKER_BUILD: ${{ needs.docker-build.result }}
+          DOCKER_ENABLED: ${{ needs.params.outputs.docker_enabled }}
+          DOCKER_PUBLISH: ${{ needs.docker-publish.result }}
+          E2E: ${{ needs.e2e-tests.result }}
+          IS_RELEASE: ${{ github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch }}
+          PARAMS: ${{ needs.params.result }}
+          SECRET_SCAN: ${{ needs.secret-scan.result }}
+          SEMGREP: ${{ needs.semgrep.result }}
+          SONAR: ${{ needs.sonar.result }}
+          SONAR_ENABLED: ${{ needs.params.outputs.sonar_enabled }}
+        run: |
+          set -euo pipefail
+          require_success() {
+            local name="$1" result="$2"
+            [[ "$result" == "success" ]] || {
+              echo "::error::${name} finished with ${result}"
+              exit 1
+            }
+          }
+          require_success params "$PARAMS"
+          require_success build "$BUILD"
+          require_success secret-scan "$SECRET_SCAN"
+          require_success semgrep "$SEMGREP"
+          if [[ "$SONAR_ENABLED" == "true" ]]; then
+            require_success sonar "$SONAR"
+          fi
+          if [[ "$DOCKER_ENABLED" == "true" ]]; then
+            require_success docker-build "$DOCKER_BUILD"
+            require_success e2e-tests "$E2E"
+            if [[ "$IS_RELEASE" == "true" ]]; then
+              require_success docker-publish "$DOCKER_PUBLISH"
+            fi
+          fi
+
   tag-release:
     name: Tag and Release
-    needs: [ params, build, secret-scan, semgrep ]
-    if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
+    needs: [ params, quality-gate ]
+    if: |
+      needs.quality-gate.result == 'success' &&
+      github.event_name == 'push' &&
+      github.ref_name == needs.params.outputs.bump_base_branch
     runs-on: ubuntu-latest
     permissions:
       contents: write
