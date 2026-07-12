@@ -63,7 +63,7 @@ jobs:
               echo "::error::${workflow} rebuilds an image after scanning"
               exit 1
             fi
-            [[ "$(grep -c 'actions/docker-build@a2852905e5da5a1088062e97dbaf1f63f8808e7f' "$path")" -eq 1 ]]
+            [[ "$(grep -c 'actions/docker-build@9dfa7ae8edd9017f3270f0d15db2aa3767d3a309' "$path")" -eq 1 ]]
           done
           grep -q 'clean verify' .github/workflows/build-java.yml
           grep -q 'python -m mypy src/' .github/workflows/build-python.yml
