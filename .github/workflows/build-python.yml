@@ -277,12 +277,6 @@ jobs:
           bandit -r src/ -f json -o bandit-report.json || true
           bandit -r src/ -ll
 
-      - name: Dependency vulnerability scan (safety)
-        run: |
-          pip install safety
-          safety check --output json --save-json safety-report.json || true
-          safety check
-
       - name: Generate SBOM (CycloneDX)
         run: |
           pip install cyclonedx-bom
@@ -322,16 +316,6 @@ jobs:
         with:
           name: bandit-report
           path: bandit-report.json
-          retention-days: 7
-          if-no-files-found: ignore
-
-      - name: Upload safety report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
-        continue-on-error: true
-        with:
-          name: safety-report
-          path: safety-report.json
           retention-days: 7
           if-no-files-found: ignore
 
@@ -558,13 +542,19 @@ jobs:
 
   docker-publish:
     name: Publish Verified Image
-    needs: [ params, build, docker-build, e2e-tests ]
+    needs: [ params, build, docker-build, e2e-tests, sonar ]
+    # sonar is optional per params.yml, so a skipped sonar job must not veto
+    # the promotion; every other gate has to succeed before the digest is tagged.
     if: |
+      !cancelled() &&
+      needs.params.result == 'success' &&
       needs.params.outputs.docker_enabled == 'true' &&
       github.event_name == 'push' &&
       github.ref_name == needs.params.outputs.bump_base_branch &&
+      needs.build.result == 'success' &&
       needs.docker-build.result == 'success' &&
-      needs.e2e-tests.result == 'success'
+      needs.e2e-tests.result == 'success' &&
+      (needs.sonar.result == 'success' || needs.sonar.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read

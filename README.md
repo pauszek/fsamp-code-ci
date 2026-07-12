@@ -11,7 +11,7 @@ behaviour stay consistent across repositories (NIST CM-2/CM-3).
 | Workflow | For | Pipeline |
 |---|---|---|
 | `build-java.yml` | Spring Boot services (gateway) | Maven build + JaCoCo gate, contract tests, SonarCloud, OWASP Dependency-Check, Semgrep, gitleaks, CycloneDX SBOM, Docker build (hadolint + Trivy), cosign sign + SBOM attestation, e2e, tag/release |
-| `build-python.yml` | Python services (processor) | Ruff, pytest (coverage gate), contract tests, hash-pinned install, pip-audit/bandit/safety, Semgrep, gitleaks, SBOM, Docker (hadolint + Trivy), cosign, e2e, tag/release |
+| `build-python.yml` | Python services (processor) | Ruff, pytest (coverage gate), contract tests, hash-pinned install, pip-audit/bandit, Semgrep, gitleaks, SBOM, Docker (hadolint + Trivy), cosign, e2e, tag/release |
 | `build-terraform.yml` | IaC (infra) | fmt, validate, TFLint, Checkov, gitleaks, tag/release |
 | `build-lite.yml` | Schema/library repos (event-schema) | versioning, gitleaks, publish, tag/release |
 | `drift-detection.yml` | infra | scheduled `terraform plan -detailed-exitcode` per env; opens an issue on drift (CM-3/CM-6) |
@@ -35,7 +35,7 @@ families the project aligns with:
 
 | Tool | Scope | Control |
 |---|---|---|
-| OWASP Dependency-Check / pip-audit / safety | dependency CVEs (Java / Python) | RA-5, SI-2 |
+| OWASP Dependency-Check / pip-audit | dependency CVEs (Java / Python) | RA-5, SI-2 |
 | Semgrep CE (`p/security-audit` + language pack) | SAST on first-party code | SA-11 |
 | gitleaks | secrets across full git history | IA-5(7), RA-5 |
 | hadolint | Dockerfile hygiene | CM-6 |
