@@ -117,14 +117,23 @@ jobs:
         id: schema
         run: |
           if [[ -f schema.version ]]; then
-            echo "version=$(tr -d '[:space:]' < schema.version)" >> "$GITHUB_OUTPUT"
+            version="$(tr -d '[:space:]' < schema.version)"
+            echo "version=${version}" >> "$GITHUB_OUTPUT"
             echo "exists=true" >> "$GITHUB_OUTPUT"
+            if [[ "${{ github.event_name }}" == "pull_request" && -f schema/event.schema.json ]]; then
+              jq -e --arg version "$version" '.properties.schemaVersion.const == $version' \
+                schema/event.schema.json >/dev/null
+              echo "local=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "local=false" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "local=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Generate GitHub App Token
-        if: steps.schema.outputs.exists == 'true'
+        if: steps.schema.outputs.exists == 'true' && steps.schema.outputs.local != 'true'
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
@@ -133,7 +142,7 @@ jobs:
           repositories: fsamp-event-schema
 
       - name: Checkout event schema
-        if: steps.schema.outputs.exists == 'true'
+        if: steps.schema.outputs.exists == 'true' && steps.schema.outputs.local != 'true'
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: pauszek/fsamp-event-schema
@@ -144,10 +153,14 @@ jobs:
       - name: Setup schema directory
         if: steps.schema.outputs.exists == 'true'
         run: |
-          mkdir -p schema
-          cp schema-repo/event.schema.json schema/
+          if [[ "${{ steps.schema.outputs.local }}" != "true" ]]; then
+            mkdir -p schema
+            cp schema-repo/event.schema.json schema/
+          fi
           # Fail fast so contract tests can never skip silently (SA-11).
           test -f schema/event.schema.json
+          jq -e --arg version "${{ steps.schema.outputs.version }}" \
+            '.properties.schemaVersion.const == $version' schema/event.schema.json >/dev/null
 
       - name: Setup Java ${{ needs.params.outputs.ci_java_version }}
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
@@ -156,11 +169,8 @@ jobs:
           java-version: ${{ needs.params.outputs.ci_java_version }}
           cache: maven
 
-      - name: Build with Maven
-        run: mvn -B -ntp -Drevision=${{ needs.params.outputs.version }} test
-
-      - name: Integration tests
-        run: mvn -B -ntp -Drevision=${{ needs.params.outputs.version }} failsafe:integration-test failsafe:verify
+      - name: Build and verify with Maven
+        run: mvn -B -ntp -Drevision=${{ needs.params.outputs.version }} clean verify
         env:
           LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
 
@@ -175,9 +185,6 @@ jobs:
             -Dgroups=fips \
             -Dspring.profiles.active=fips-test \
             -Dorg.bouncycastle.fips.approved_only=true
-
-      - name: Generate SBOM (CycloneDX)
-        run: mvn -B -ntp -Drevision=${{ needs.params.outputs.version }} package -DskipTests -q
 
       - name: Upload coverage
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -308,14 +315,23 @@ jobs:
         shell: bash
         run: |
           if [[ -f schema.version ]]; then
-            echo "version=$(tr -d '[:space:]' < schema.version)" >> "$GITHUB_OUTPUT"
+            version="$(tr -d '[:space:]' < schema.version)"
+            echo "version=${version}" >> "$GITHUB_OUTPUT"
             echo "exists=true" >> "$GITHUB_OUTPUT"
+            if [[ "${{ github.event_name }}" == "pull_request" && -f schema/event.schema.json ]]; then
+              jq -e --arg version "$version" '.properties.schemaVersion.const == $version' \
+                schema/event.schema.json >/dev/null
+              echo "local=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "local=false" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "local=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Generate GitHub App Token
-        if: steps.coverage.outputs.present != 'true' && steps.schema.outputs.exists == 'true'
+        if: steps.coverage.outputs.present != 'true' && steps.schema.outputs.exists == 'true' && steps.schema.outputs.local != 'true'
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
@@ -324,7 +340,7 @@ jobs:
           repositories: fsamp-event-schema
 
       - name: Checkout event schema
-        if: steps.coverage.outputs.present != 'true' && steps.schema.outputs.exists == 'true'
+        if: steps.coverage.outputs.present != 'true' && steps.schema.outputs.exists == 'true' && steps.schema.outputs.local != 'true'
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: pauszek/fsamp-event-schema
@@ -336,9 +352,13 @@ jobs:
         if: steps.coverage.outputs.present != 'true' && steps.schema.outputs.exists == 'true'
         shell: bash
         run: |
-          mkdir -p schema
-          cp schema-repo/event.schema.json schema/
+          if [[ "${{ steps.schema.outputs.local }}" != "true" ]]; then
+            mkdir -p schema
+            cp schema-repo/event.schema.json schema/
+          fi
           test -f schema/event.schema.json
+          jq -e --arg version "${{ steps.schema.outputs.version }}" \
+            '.properties.schemaVersion.const == $version' schema/event.schema.json >/dev/null
 
       - name: Regenerate coverage when artifact is missing
         if: steps.coverage.outputs.present != 'true'
@@ -362,7 +382,6 @@ jobs:
   dependency-check:
     name: OWASP Dependency-Check
     needs: [ params, build ]
-    if: github.event_name != 'push' || github.ref_name != needs.params.outputs.bump_base_branch || vars.OWASP_RUN_ON_DEFAULT_BRANCH == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -445,8 +464,8 @@ jobs:
           fi
 
           if [[ "${OWASP_CACHE_PRESENT}" != "true" && "${owasp_auto_update}" == "false" ]]; then
-            echo "::warning title=OWASP cache missing::No restored Dependency-Check data is available. Skipping live NVD refresh; set OWASP_AUTO_UPDATE=true to force a cache warmup run."
-            exit 0
+            echo "::notice title=OWASP cache warmup::No restored Dependency-Check data is available; enabling a live NVD refresh."
+            owasp_auto_update="true"
           fi
 
           if [[ "${owasp_auto_update}" == "false" ]]; then
@@ -536,8 +555,12 @@ jobs:
     needs: [ params, build, secret-scan, semgrep ]
     if: needs.params.outputs.docker_enabled == 'true'
     runs-on: ${{ needs.params.outputs.docker_runner }}
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
     permissions:
       contents: read
+      id-token: write
+      packages: write
       security-events: write
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -549,53 +572,123 @@ jobs:
           failure-threshold: error
 
       - name: Build Docker image
-        uses: pauszek/fsamp-code-ci/.github/actions/docker-build@8d6ea616a4c8082315c46fd81e02d69815625d01
+        id: image
+        uses: pauszek/fsamp-code-ci/.github/actions/docker-build@a2852905e5da5a1088062e97dbaf1f63f8808e7f
         with:
           image-name: ${{ needs.params.outputs.docker_image_name }}
           dockerfile: ${{ needs.params.outputs.docker_dockerfile }}
-          version: ${{ needs.params.outputs.version }}
+          version: ${{ needs.params.outputs.version }}-candidate-${{ github.sha }}
           registry: ${{ needs.params.outputs.docker_registry }}
           platforms: ${{ needs.params.outputs.docker_platforms }}
-          push: 'false'
+          push: ${{ github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch }}
 
       - name: Run Trivy scan
         uses: pauszek/fsamp-code-ci/.github/actions/security-scan@8d6ea616a4c8082315c46fd81e02d69815625d01
         with:
-          image-ref: ${{ needs.params.outputs.docker_image_name }}:scan
+          image-ref: ${{ steps.image.outputs.scan-ref }}
           severity: 'CRITICAL,HIGH'
           fail-on-vuln: 'true'
           upload-sarif: 'false'
-  docker-push:
-    name: Push to Registry
+
+  docker-publish:
+    name: Publish Verified Image
     needs: [ params, build, docker-build, e2e-tests ]
     if: |
-      needs.params.outputs.docker_enabled == 'true' && 
-      github.event_name == 'push' && 
+      needs.params.outputs.docker_enabled == 'true' &&
+      github.event_name == 'push' &&
       github.ref_name == needs.params.outputs.bump_base_branch &&
       needs.docker-build.result == 'success' &&
       needs.e2e-tests.result == 'success'
-    runs-on: ${{ needs.params.outputs.docker_runner }}
-    timeout-minutes: 30
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
       packages: write
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Install crane
+        uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
 
-      - name: Build and push
-        uses: pauszek/fsamp-code-ci/.github/actions/docker-build@8d6ea616a4c8082315c46fd81e02d69815625d01
-        with:
-          image-name: ${{ needs.params.outputs.docker_image_name }}
-          dockerfile: ${{ needs.params.outputs.docker_dockerfile }}
-          version: ${{ needs.params.outputs.version }}
-          registry: ${{ needs.params.outputs.docker_registry }}
-          platforms: ${{ needs.params.outputs.docker_platforms }}
-          push: 'true'
+      - name: Promote scanned digest
+        shell: bash
+        env:
+          DIGEST: ${{ needs.docker-build.outputs.digest }}
+          IMAGE_NAME: ${{ needs.params.outputs.docker_image_name }}
+          REGISTRY: ${{ needs.params.outputs.docker_registry }}
+          VERSION: ${{ needs.params.outputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$REGISTRY" == "ghcr.io" ]] || {
+            echo "::error::Registry promotion currently supports ghcr.io only"
+            exit 1
+          }
+          test -n "$DIGEST"
+          repository="${REGISTRY}/${{ github.repository_owner }}/${IMAGE_NAME}"
+          echo "${{ github.token }}" | crane auth login "$REGISTRY" \
+            --username "${{ github.actor }}" --password-stdin
+          crane tag "${repository}@${DIGEST}" "$VERSION"
+          [[ "$(crane digest "${repository}:${VERSION}")" == "$DIGEST" ]]
+
+  quality-gate:
+    name: Release Quality Gate
+    if: always()
+    needs:
+      - params
+      - build
+      - secret-scan
+      - semgrep
+      - sonar
+      - dependency-check
+      - docker-build
+      - e2e-tests
+      - docker-publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all configured checks
+        shell: bash
+        env:
+          BUILD: ${{ needs.build.result }}
+          DEPENDENCY_CHECK: ${{ needs.dependency-check.result }}
+          DOCKER_BUILD: ${{ needs.docker-build.result }}
+          DOCKER_ENABLED: ${{ needs.params.outputs.docker_enabled }}
+          DOCKER_PUBLISH: ${{ needs.docker-publish.result }}
+          E2E: ${{ needs.e2e-tests.result }}
+          IS_RELEASE: ${{ github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch }}
+          PARAMS: ${{ needs.params.result }}
+          SECRET_SCAN: ${{ needs.secret-scan.result }}
+          SEMGREP: ${{ needs.semgrep.result }}
+          SONAR: ${{ needs.sonar.result }}
+          SONAR_ENABLED: ${{ needs.params.outputs.sonar_enabled }}
+        run: |
+          set -euo pipefail
+          require_success() {
+            local name="$1" result="$2"
+            [[ "$result" == "success" ]] || {
+              echo "::error::${name} finished with ${result}"
+              exit 1
+            }
+          }
+          require_success params "$PARAMS"
+          require_success build "$BUILD"
+          require_success secret-scan "$SECRET_SCAN"
+          require_success semgrep "$SEMGREP"
+          require_success dependency-check "$DEPENDENCY_CHECK"
+          if [[ "$SONAR_ENABLED" == "true" ]]; then
+            require_success sonar "$SONAR"
+          fi
+          if [[ "$DOCKER_ENABLED" == "true" ]]; then
+            require_success docker-build "$DOCKER_BUILD"
+            require_success e2e-tests "$E2E"
+            if [[ "$IS_RELEASE" == "true" ]]; then
+              require_success docker-publish "$DOCKER_PUBLISH"
+            fi
+          fi
+
   tag-release:
     name: Tag and Release
-    needs: [ params, build, secret-scan, semgrep ]
-    if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
+    needs: [ params, quality-gate ]
+    if: |
+      needs.quality-gate.result == 'success' &&
+      github.event_name == 'push' &&
+      github.ref_name == needs.params.outputs.bump_base_branch
     runs-on: ubuntu-latest
     permissions:
       contents: write

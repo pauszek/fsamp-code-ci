@@ -104,12 +104,38 @@ jobs:
             var_file_arg="-var-file=${{ inputs.tfvars_file }}"
           fi
           terraform plan -input=false -refresh=true ${var_file_arg} \
-            -detailed-exitcode -no-color -lock-timeout=300s \
-            -out=drift.tfplan > plan.txt 2>&1
+            -detailed-exitcode -no-color -lock-timeout=300s > plan.txt 2>&1
           exit_code=$?
           echo "exit_code=${exit_code}" >> "$GITHUB_OUTPUT"
-          # Truncate plan output to avoid blowing the issue body limit.
-          head -c 60000 plan.txt > plan-truncated.txt || true
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          source = Path("plan.txt").read_text(encoding="utf-8", errors="replace")
+          sensitive = re.compile(
+              r"(?i)(authorization|password|passwd|secret|token|private[_ -]?key|"
+              r"client[_ -]?secret|access[_ -]?key|session[_ -]?key|api[_ -]?key)"
+          )
+          credential = re.compile(
+              r"(?i)(AKIA|ASIA)[A-Z0-9]{16}|bearer\s+[A-Za-z0-9._~+/=-]+"
+          )
+          redacted = []
+          in_pem = False
+          for line in source.splitlines():
+              if "-----BEGIN " in line:
+                  in_pem = True
+              if in_pem or sensitive.search(line) or credential.search(line):
+                  redacted.append("[REDACTED]")
+              else:
+                  redacted.append(line)
+              if "-----END " in line:
+                  in_pem = False
+
+          output = "\n".join(redacted)
+          Path("plan-sanitized.txt").write_text(
+              output[:60000], encoding="utf-8"
+          )
+          PY
           if [[ "${exit_code}" -eq 0 ]]; then
             echo "drift=false" >> "$GITHUB_OUTPUT"
           elif [[ "${exit_code}" -eq 2 ]]; then
@@ -124,10 +150,8 @@ jobs:
         continue-on-error: true
         with:
           name: terraform-plan-${{ inputs.environment }}
-          path: |
-            ${{ inputs.working_directory }}/plan.txt
-            ${{ inputs.working_directory }}/drift.tfplan
-          retention-days: 30
+          path: ${{ inputs.working_directory }}/plan-sanitized.txt
+          retention-days: 7
           if-no-files-found: warn
 
       - name: Open or update drift issue
@@ -139,7 +163,7 @@ jobs:
             const path = require('path');
             const env = '${{ inputs.environment }}';
             const driftStatus = '${{ steps.plan.outputs.drift }}';
-            const planPath = path.join('${{ inputs.working_directory }}', 'plan-truncated.txt');
+            const planPath = path.join('${{ inputs.working_directory }}', 'plan-sanitized.txt');
             const planExists = fs.existsSync(planPath);
             const planBody = planExists ? fs.readFileSync(planPath, 'utf8') : '(plan output unavailable)';
 
