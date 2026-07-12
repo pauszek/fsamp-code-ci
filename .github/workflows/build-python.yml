@@ -539,7 +539,7 @@ jobs:
 
       - name: Build Docker image
         id: image
-        uses: pauszek/fsamp-code-ci/.github/actions/docker-build@a2852905e5da5a1088062e97dbaf1f63f8808e7f
+        uses: pauszek/fsamp-code-ci/.github/actions/docker-build@9dfa7ae8edd9017f3270f0d15db2aa3767d3a309
         with:
           image-name: ${{ needs.params.outputs.docker_image_name }}
           dockerfile: ${{ needs.params.outputs.docker_dockerfile }}
