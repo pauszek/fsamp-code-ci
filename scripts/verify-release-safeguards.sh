@@ -29,6 +29,14 @@ grep -Fq "client-id: \${{ inputs['app-id'] }}" \
     .github/actions/bump-release-version/action.yml
 [[ "$(grep -c 'aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25' \
     .github/actions/security-scan/action.yml)" -eq 2 ]]
+for workflow in build-java.yml build-python.yml; do
+    grep -q 'actions/security-scan@55fcc9152186ae32df127bab632a054b8f4f8aa3' \
+        ".github/workflows/${workflow}"
+done
+for workflow in build-java.yml build-python.yml build-terraform.yml build-lite.yml; do
+    grep -q 'actions/bump-release-version@55fcc9152186ae32df127bab632a054b8f4f8aa3' \
+        ".github/workflows/${workflow}"
+done
 
 if grep -R -q 'REQUIRE_FIPS_PROVIDER=false' \
     .github/actions \
