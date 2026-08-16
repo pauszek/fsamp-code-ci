@@ -36,6 +36,13 @@ for workflow in build-java.yml build-python.yml; do
     workflow_path=".github/workflows/${workflow}"
     grep -q 'this-image:.*needs.docker-build.outputs.scan_ref' "${workflow_path}"
     [[ "$(grep -c 'actions/run-e2e@cad15e48d90cdb74ef335437c4c00434729bf8af' "${workflow_path}")" -eq 1 ]]
+    [[ "$(grep -c 'name: Verify local scanned candidate' "${workflow_path}")" -eq 1 ]]
+    [[ "$(grep -c 'name: Pull immutable scanned candidate' "${workflow_path}")" -eq 1 ]]
+    grep -q 'SCAN_REF must be an immutable ghcr.io digest' "${workflow_path}"
+    if grep -q '|| docker pull' "${workflow_path}"; then
+        echo "::error::${workflow} may pull a mutable local candidate tag"
+        exit 1
+    fi
     if grep -q 'Build this service image' "${workflow_path}"; then
         echo "::error::${workflow} rebuilds the scanned image before E2E"
         exit 1

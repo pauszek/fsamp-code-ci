@@ -750,13 +750,31 @@ jobs:
           echo "${{ github.token }}" | docker login "${REGISTRY}" \
             --username "${{ github.actor }}" --password-stdin
 
-      - name: Verify candidate identity
+      - name: Verify local scanned candidate
+        if: github.event_name != 'push' || github.ref_name != needs.params.outputs.bump_base_branch
         shell: bash
         env:
           SCAN_REF: ${{ needs.docker-build.outputs.scan_ref }}
         run: |
           set -euo pipefail
-          docker image inspect "${SCAN_REF}" >/dev/null 2>&1 || docker pull "${SCAN_REF}"
+          docker image inspect "${SCAN_REF}" >/dev/null 2>&1 || {
+            echo "::error::The scanned local candidate ${SCAN_REF} is not loaded"
+            exit 1
+          }
+
+      - name: Pull immutable scanned candidate
+        if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
+        shell: bash
+        env:
+          SCAN_REF: ${{ needs.docker-build.outputs.scan_ref }}
+        run: |
+          set -euo pipefail
+          [[ "${SCAN_REF}" =~ ^ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
+            echo "::error::SCAN_REF must be an immutable ghcr.io digest"
+            exit 1
+          }
+          docker pull "${SCAN_REF}"
+          docker image inspect "${SCAN_REF}" >/dev/null
 
       - name: Run E2E Tests
         uses: pauszek/fsamp-code-ci/.github/actions/run-e2e@cad15e48d90cdb74ef335437c4c00434729bf8af
