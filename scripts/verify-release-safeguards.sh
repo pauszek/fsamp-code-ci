@@ -21,6 +21,15 @@ if grep -q -- '-Dgroups=fips' .github/workflows/build-java.yml; then
 fi
 grep -q 'python -m mypy src/' .github/workflows/build-python.yml
 
+[[ "$(grep -Fc "client-id: \${{ vars.GABRBA_APPID }}" .github/workflows/build-java.yml)" -eq 3 ]]
+[[ "$(grep -Fc "client-id: \${{ vars.GABRBA_APPID }}" .github/workflows/build-python.yml)" -eq 3 ]]
+[[ "$(grep -Fc "app-id: \${{ vars.GABRBA_APPID }}" .github/workflows/build-java.yml)" -eq 1 ]]
+[[ "$(grep -Fc "app-id: \${{ vars.GABRBA_APPID }}" .github/workflows/build-python.yml)" -eq 1 ]]
+grep -Fq "client-id: \${{ inputs['app-id'] }}" \
+    .github/actions/bump-release-version/action.yml
+[[ "$(grep -c 'aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25' \
+    .github/actions/security-scan/action.yml)" -eq 2 ]]
+
 if grep -R -q 'REQUIRE_FIPS_PROVIDER=false' \
     .github/actions \
     .github/workflows/build-java.yml \
