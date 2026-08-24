@@ -27,6 +27,16 @@ grep -q 'python -m mypy src/' .github/workflows/build-python.yml
 [[ "$(grep -Fc "app-id: \${{ vars.GABRBA_APPID }}" .github/workflows/build-python.yml)" -eq 1 ]]
 grep -Fq "client-id: \${{ inputs['app-id'] }}" \
     .github/actions/bump-release-version/action.yml
+
+bump_action=.github/actions/bump-release-version/action.yml
+grep -Fq "commit-message: \"chore: bump release.version to \${{ steps.bump.outputs.new }}\"" \
+    "${bump_action}"
+grep -Fq "title: \"[skip ci] chore: bump release.version to \${{ steps.bump.outputs.new }}\"" \
+    "${bump_action}"
+if grep -Fq 'commit-message: "[skip ci]' "${bump_action}"; then
+    echo "::error::Autobump branch commits must run required pull-request checks"
+    exit 1
+fi
 [[ "$(grep -c 'aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25' \
     .github/actions/security-scan/action.yml)" -eq 2 ]]
 for workflow in build-java.yml build-python.yml; do
@@ -34,7 +44,7 @@ for workflow in build-java.yml build-python.yml; do
         ".github/workflows/${workflow}"
 done
 for workflow in build-java.yml build-python.yml build-terraform.yml build-lite.yml; do
-    grep -q 'actions/bump-release-version@55fcc9152186ae32df127bab632a054b8f4f8aa3' \
+    grep -q 'actions/bump-release-version@8d702199082e5b694f1e015b0c99dba5d8b71a33' \
         ".github/workflows/${workflow}"
 done
 
