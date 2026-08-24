@@ -69,6 +69,13 @@ fi
 
 grep -q 'Dockerfile.lambda' .github/actions/run-e2e/action.yml
 grep -q 'enforce_fips(True)' .github/actions/run-e2e/action.yml
+ref_selector_invocation="bash \"\${REF_SELECTOR}\""
+[[ "$(grep -Fc "${ref_selector_invocation}" .github/actions/run-e2e/action.yml)" -eq 2 ]]
+stale_branch_probe="ls-remote.*\"\${branch}\""
+if grep -Eq "${stale_branch_probe}" .github/actions/run-e2e/action.yml; then
+    echo "::error::Cross-repository E2E refs must require an open pull request"
+    exit 1
+fi
 
 for workflow in build-java.yml build-python.yml; do
     workflow_path=".github/workflows/${workflow}"
