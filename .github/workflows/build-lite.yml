@@ -231,7 +231,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Bump release.version via PR
-        uses: pauszek/fsamp-code-ci/.github/actions/bump-release-version@8d6ea616a4c8082315c46fd81e02d69815625d01
+        uses: pauszek/fsamp-code-ci/.github/actions/bump-release-version@55fcc9152186ae32df127bab632a054b8f4f8aa3
         with:
           app-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}

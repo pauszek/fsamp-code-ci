@@ -137,7 +137,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.GABRBA_APPID }}
+          client-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}
           repositories: fsamp-event-schema
 
@@ -437,7 +437,7 @@ jobs:
         id: sonar-app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.GABRBA_APPID }}
+          client-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}
           repositories: fsamp-event-schema
 
@@ -507,6 +507,7 @@ jobs:
     runs-on: ${{ needs.params.outputs.docker_runner }}
     outputs:
       digest: ${{ steps.image.outputs.digest }}
+      scan_ref: ${{ steps.image.outputs.scan-ref }}
     permissions:
       contents: read
       id-token: write
@@ -533,12 +534,31 @@ jobs:
           push: ${{ github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch }}
 
       - name: Run Trivy scan
-        uses: pauszek/fsamp-code-ci/.github/actions/security-scan@8d6ea616a4c8082315c46fd81e02d69815625d01
+        uses: pauszek/fsamp-code-ci/.github/actions/security-scan@55fcc9152186ae32df127bab632a054b8f4f8aa3
         with:
           image-ref: ${{ steps.image.outputs.scan-ref }}
           severity: 'CRITICAL,HIGH'
           fail-on-vuln: 'true'
           upload-sarif: 'false'
+
+      - name: Export scanned candidate for E2E
+        if: github.event_name != 'push' || github.ref_name != needs.params.outputs.bump_base_branch
+        shell: bash
+        env:
+          SCAN_REF: ${{ steps.image.outputs.scan-ref }}
+        run: |
+          set -euo pipefail
+          docker save "${SCAN_REF}" | gzip -1 > candidate-image.tar.gz
+
+      - name: Upload scanned candidate for E2E
+        if: github.event_name != 'push' || github.ref_name != needs.params.outputs.bump_base_branch
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-image-${{ github.sha }}
+          path: candidate-image.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
 
   docker-publish:
     name: Publish Verified Image
@@ -673,7 +693,7 @@ jobs:
           fetch-depth: 0
 
       - name: Bump version via PR
-        uses: pauszek/fsamp-code-ci/.github/actions/bump-release-version@8d6ea616a4c8082315c46fd81e02d69815625d01
+        uses: pauszek/fsamp-code-ci/.github/actions/bump-release-version@55fcc9152186ae32df127bab632a054b8f4f8aa3
         with:
           app-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}
@@ -688,12 +708,15 @@ jobs:
       needs.docker-build.result == 'success'
     runs-on: ${{ needs.params.outputs.docker_runner }}
     timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Generate GitHub App Token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ vars.GABRBA_APPID }}
+          client-id: ${{ vars.GABRBA_APPID }}
           private-key: ${{ secrets.GABRBA_SECRET }}
           repositories: fsamp-infra,fsamp-gateway,fsamp-processor
 
@@ -705,20 +728,58 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           path: infra
 
-      - name: Checkout this repo
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Download scanned candidate
+        if: github.event_name != 'push' || github.ref_name != needs.params.outputs.bump_base_branch
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: this-repo
+          name: candidate-image-${{ github.sha }}
+          path: .
 
-      - name: Build this service image
+      - name: Load scanned candidate
+        if: github.event_name != 'push' || github.ref_name != needs.params.outputs.bump_base_branch
+        run: gzip -dc candidate-image.tar.gz | docker load
+
+      - name: Log in for immutable candidate
+        if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
+        shell: bash
+        env:
+          REGISTRY: ${{ needs.params.outputs.docker_registry }}
         run: |
-          cd this-repo
-          docker build --target production --build-arg REQUIRE_FIPS_PROVIDER=false -t ${{ needs.params.outputs.docker_image_name }}:e2e-this .
+          set -euo pipefail
+          [[ "${REGISTRY}" == "ghcr.io" ]]
+          echo "${{ github.token }}" | docker login "${REGISTRY}" \
+            --username "${{ github.actor }}" --password-stdin
+
+      - name: Verify local scanned candidate
+        if: github.event_name != 'push' || github.ref_name != needs.params.outputs.bump_base_branch
+        shell: bash
+        env:
+          SCAN_REF: ${{ needs.docker-build.outputs.scan_ref }}
+        run: |
+          set -euo pipefail
+          docker image inspect "${SCAN_REF}" >/dev/null 2>&1 || {
+            echo "::error::The scanned local candidate ${SCAN_REF} is not loaded"
+            exit 1
+          }
+
+      - name: Pull immutable scanned candidate
+        if: github.event_name == 'push' && github.ref_name == needs.params.outputs.bump_base_branch
+        shell: bash
+        env:
+          SCAN_REF: ${{ needs.docker-build.outputs.scan_ref }}
+        run: |
+          set -euo pipefail
+          [[ "${SCAN_REF}" =~ ^ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
+            echo "::error::SCAN_REF must be an immutable ghcr.io digest"
+            exit 1
+          }
+          docker pull "${SCAN_REF}"
+          docker image inspect "${SCAN_REF}" >/dev/null
 
       - name: Run E2E Tests
-        uses: pauszek/fsamp-code-ci/.github/actions/run-e2e@8d6ea616a4c8082315c46fd81e02d69815625d01
+        uses: pauszek/fsamp-code-ci/.github/actions/run-e2e@cad15e48d90cdb74ef335437c4c00434729bf8af
         with:
           image-name: ${{ needs.params.outputs.docker_image_name }}
-          this-image: ${{ needs.params.outputs.docker_image_name }}:e2e-this
+          this-image: ${{ needs.docker-build.outputs.scan_ref }}
           app-token: ${{ steps.app-token.outputs.token }}
           localstack-token: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}

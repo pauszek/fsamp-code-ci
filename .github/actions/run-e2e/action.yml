@@ -22,7 +22,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Report fsamp-infra ref
+    - name: Select fsamp-infra ref
       shell: bash
       env:
         INFRA_PATH: ${{ inputs.infra-path }}
@@ -33,7 +33,14 @@ runs:
           exit 0
         fi
 
-        echo "Using pre-checked-out fsamp-infra ref:"
+        branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
+        if [[ -n "${branch}" ]] &&
+           git -C "${INFRA_PATH}" ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
+          git -C "${INFRA_PATH}" fetch --depth=1 origin "${branch}"
+          git -C "${INFRA_PATH}" checkout --detach FETCH_HEAD
+        fi
+
+        echo "Using fsamp-infra ref:"
         git -C "${INFRA_PATH}" --no-pager log -1 --oneline
 
     - name: Determine counterpart
@@ -120,10 +127,19 @@ runs:
           ./mvnw clean package -DskipTests -q
           docker build -t fsamp-gateway:e2e .
         elif [[ "$COUNTERPART_NAME" == "fsamp-processor" ]]; then
-          docker build --target production --build-arg REQUIRE_FIPS_PROVIDER=false -t fsamp-processor:e2e .
+          docker build -f Dockerfile.lambda -t fsamp-processor:e2e .
         fi
         
         echo "Counterpart built: ${COUNTERPART_NAME}:e2e"
+
+    - name: Verify processor FIPS runtime
+      shell: bash
+      env:
+        PROCESSOR_IMAGE: ${{ steps.counterpart.outputs.processor_image }}
+      run: |
+        set -euo pipefail
+        docker run --rm --entrypoint python "${PROCESSOR_IMAGE}" \
+          -c 'from processor.infrastructure.fips import enforce_fips; enforce_fips(True)'
 
     - name: Start LocalStack
       shell: bash
