@@ -66,6 +66,8 @@ for workflow in build-java.yml build-python.yml; do
     [[ "$(grep -c 'name: Verify local scanned candidate' "${workflow_path}")" -eq 1 ]]
     [[ "$(grep -c 'name: Pull immutable scanned candidate' "${workflow_path}")" -eq 1 ]]
     grep -q 'SCAN_REF must be an immutable ghcr.io digest' "${workflow_path}"
+    grep -Fq "[[ \"\${SCAN_REF}\" =~ ^ghcr\.io/[a-z0-9._/-]+(:[a-z0-9._-]+)?@sha256:[0-9a-f]{64}\$ ]] || {" \
+        "${workflow_path}"
     if grep -q '|| docker pull' "${workflow_path}"; then
         echo "::error::${workflow} may pull a mutable local candidate tag"
         exit 1
@@ -75,6 +77,18 @@ for workflow in build-java.yml build-python.yml; do
         exit 1
     fi
 done
+
+digest="sha256:bb5b641aace958224d6e6fa798333f6967aa53e4fd0df053a5b716bb51c2dbae"
+immutable_candidate="ghcr.io/pauszek/fsamp-processor:0.0.28-candidate-deadbeef@${digest}"
+untagged_candidate="ghcr.io/pauszek/fsamp-processor@${digest}"
+mutable_candidate="ghcr.io/pauszek/fsamp-processor:0.0.28-candidate-deadbeef"
+immutable_pattern='^ghcr\.io/[a-z0-9._/-]+(:[a-z0-9._-]+)?@sha256:[0-9a-f]{64}$'
+[[ "${immutable_candidate}" =~ ${immutable_pattern} ]]
+[[ "${untagged_candidate}" =~ ${immutable_pattern} ]]
+if [[ "${mutable_candidate}" =~ ${immutable_pattern} ]]; then
+    echo "::error::A candidate without a digest must not pass immutable-reference validation"
+    exit 1
+fi
 
 if grep -q 'drift.tfplan' .github/workflows/drift-detection.yml; then
     echo "::error::Binary Terraform plans must not be retained"
