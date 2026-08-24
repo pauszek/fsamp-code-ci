@@ -44,7 +44,7 @@ for workflow in build-java.yml build-python.yml; do
         ".github/workflows/${workflow}"
 done
 for workflow in build-java.yml build-python.yml build-terraform.yml build-lite.yml; do
-    grep -q 'actions/bump-release-version@55fcc9152186ae32df127bab632a054b8f4f8aa3' \
+    grep -q 'actions/bump-release-version@8d702199082e5b694f1e015b0c99dba5d8b71a33' \
         ".github/workflows/${workflow}"
 done
 
