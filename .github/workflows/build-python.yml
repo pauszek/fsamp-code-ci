@@ -203,7 +203,7 @@ jobs:
 
       - name: Integration tests
         run: |
-          python -c 'import testcontainers' 2>/dev/null \
+          python -c 'import testcontainers.localstack' 2>/dev/null \
             || pip install 'testcontainers[localstack]'
           pytest -m integration -v --tb=short
         env:
