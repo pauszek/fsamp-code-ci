@@ -75,6 +75,10 @@ mirror can be selected with `NVD_DATAFEED_URL`, whose value must contain `{0}`.
 `maven-build`, `publish`, `run-e2e`, `tag-and-release`,
 `bump-release-version`.
 
+`run-e2e` uses a same-named branch from `fsamp-infra` or the counterpart
+service only while that branch has an open pull request to `main`. Stale
+branches therefore cannot silently replace the current integration baseline.
+
 > In-repo actions are referenced by full path at a pinned SHA
 > (`pauszek/fsamp-code-ci/.github/actions/<name>@<sha>`) because reusable
 > workflows resolve `./` against the *consumer's* checkout, not this repo. A

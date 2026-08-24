@@ -55,6 +55,9 @@ jobs:
       - name: Verify release safeguards
         run: bash scripts/verify-release-safeguards.sh
 
+      - name: Test E2E reference selection
+        run: bash scripts/test-select-e2e-ref.sh
+
   build-lite:
     uses: ./.github/workflows/build-lite.yml
     secrets:

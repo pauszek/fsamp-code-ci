@@ -25,7 +25,10 @@ runs:
     - name: Select fsamp-infra ref
       shell: bash
       env:
+        GH_TOKEN: ${{ inputs.app-token }}
         INFRA_PATH: ${{ inputs.infra-path }}
+        INFRA_REPOSITORY: ${{ github.repository_owner }}/fsamp-infra
+        REF_SELECTOR: ${{ github.action_path }}/select-open-pr-ref.sh
       run: |
         set -euo pipefail
         if [[ ! -d "${INFRA_PATH}/.git" ]]; then
@@ -34,13 +37,13 @@ runs:
         fi
 
         branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
-        if [[ -n "${branch}" ]] &&
-           git -C "${INFRA_PATH}" ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
-          git -C "${INFRA_PATH}" fetch --depth=1 origin "${branch}"
+        infra_ref="$(bash "${REF_SELECTOR}" "${INFRA_REPOSITORY}" "${branch}")"
+        if [[ "${infra_ref}" != "main" ]]; then
+          git -C "${INFRA_PATH}" fetch --depth=1 origin "${infra_ref}"
           git -C "${INFRA_PATH}" checkout --detach FETCH_HEAD
         fi
 
-        echo "Using fsamp-infra ref:"
+        echo "Using fsamp-infra ref: ${infra_ref}"
         git -C "${INFRA_PATH}" --no-pager log -1 --oneline
 
     - name: Determine counterpart
@@ -82,19 +85,13 @@ runs:
       id: counterpart-ref
       shell: bash
       env:
-        APP_TOKEN: ${{ inputs.app-token }}
+        GH_TOKEN: ${{ inputs.app-token }}
         COUNTERPART_REPO: ${{ steps.counterpart.outputs.counterpart_repo }}
+        REF_SELECTOR: ${{ github.action_path }}/select-open-pr-ref.sh
       run: |
         set -euo pipefail
         branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
-        ref="main"
-
-        if [[ -n "${branch}" ]]; then
-          repo_url="https://x-access-token:${APP_TOKEN}@github.com/${COUNTERPART_REPO}.git"
-          if git ls-remote --exit-code --heads "${repo_url}" "${branch}" >/dev/null 2>&1; then
-            ref="${branch}"
-          fi
-        fi
+        ref="$(bash "${REF_SELECTOR}" "${COUNTERPART_REPO}" "${branch}")"
 
         echo "ref=${ref}" >> "$GITHUB_OUTPUT"
         echo "Counterpart ref: ${ref}"
