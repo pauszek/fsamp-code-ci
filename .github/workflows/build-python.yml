@@ -777,7 +777,7 @@ jobs:
           docker image inspect "${SCAN_REF}" >/dev/null
 
       - name: Run E2E Tests
-        uses: pauszek/fsamp-code-ci/.github/actions/run-e2e@cad15e48d90cdb74ef335437c4c00434729bf8af
+        uses: pauszek/fsamp-code-ci/.github/actions/run-e2e@65ceb92119c1b56a7b016ca0249b87adc65cf906
         with:
           image-name: ${{ needs.params.outputs.docker_image_name }}
           this-image: ${{ needs.docker-build.outputs.scan_ref }}
