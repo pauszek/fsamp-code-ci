@@ -823,7 +823,7 @@ jobs:
           SCAN_REF: ${{ needs.docker-build.outputs.scan_ref }}
         run: |
           set -euo pipefail
-          [[ "${SCAN_REF}" =~ ^ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || {
+          [[ "${SCAN_REF}" =~ ^ghcr\.io/[a-z0-9._/-]+(:[a-z0-9._-]+)?@sha256:[0-9a-f]{64}$ ]] || {
             echo "::error::SCAN_REF must be an immutable ghcr.io digest"
             exit 1
           }
