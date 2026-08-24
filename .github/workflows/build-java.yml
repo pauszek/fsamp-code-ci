@@ -442,7 +442,7 @@ jobs:
             echo "NVD API key configured: yes"
           else
             nvd_delay="${NVD_API_DELAY:-8000}"
-            echo "::warning title=Missing NVD_API_KEY::Configure the NVD_API_KEY repository or organization secret to avoid slow OWASP Dependency-Check NVD updates."
+            echo "NVD API key configured: no"
           fi
           nvd_max_retry_count="${NVD_MAX_RETRY_COUNT:-10}"
           nvd_valid_for_hours="${NVD_VALID_FOR_HOURS:-336}"
@@ -453,10 +453,7 @@ jobs:
           fi
           echo "NVD data valid for hours: ${nvd_valid_for_hours}"
 
-          owasp_auto_update="${OWASP_AUTO_UPDATE:-}"
-          if [[ -z "${owasp_auto_update}" ]]; then
-            owasp_auto_update="false"
-          fi
+          owasp_auto_update="${OWASP_AUTO_UPDATE:-true}"
 
           if [[ "${owasp_auto_update}" != "true" && "${owasp_auto_update}" != "false" ]]; then
             echo "::error title=Invalid OWASP_AUTO_UPDATE::OWASP_AUTO_UPDATE must be true or false."
@@ -473,6 +470,19 @@ jobs:
           fi
           echo "OWASP auto-update: ${owasp_auto_update}"
 
+          nvd_datafeed_args=()
+          if [[ "${owasp_auto_update}" == "true" ]] && \
+             [[ "${OWASP_CACHE_PRESENT}" != "true" || -z "${NVD_API_KEY:-}" ]]; then
+            default_nvd_datafeed_url="https://dependency-check.github.io/DependencyCheck_Builder/nvd_cache/nvdcve-{0}.json.gz"
+            nvd_datafeed_url="${NVD_DATAFEED_URL:-${default_nvd_datafeed_url}}"
+            if ! [[ "${nvd_datafeed_url}" == https://*"{0}"* ]]; then
+              echo "::error title=Invalid NVD_DATAFEED_URL::NVD_DATAFEED_URL must be an HTTPS URL containing the {0} placeholder."
+              exit 1
+            fi
+            echo "::notice title=NVD data feed::Using the NVD data feed for a cold-cache or unkeyed live update."
+            nvd_datafeed_args+=("-DnvdDatafeedUrl=${nvd_datafeed_url}")
+          fi
+
           run_dependency_check() {
             mvn -B -ntp \
               -Drevision=${{ needs.params.outputs.version }} \
@@ -482,6 +492,7 @@ jobs:
               -DnvdApiDelay="${nvd_delay}" \
               -DnvdMaxRetryCount="${nvd_max_retry_count}" \
               -DnvdValidForHours="${nvd_valid_for_hours}" \
+              "${nvd_datafeed_args[@]}" \
               verify -DskipTests -Psecurity 2>&1 | tee dependency-check-maven.log
           }
 
@@ -505,6 +516,7 @@ jobs:
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
           NVD_API_DELAY: ${{ vars.NVD_API_DELAY }}
+          NVD_DATAFEED_URL: ${{ vars.NVD_DATAFEED_URL }}
           NVD_MAX_RETRY_COUNT: ${{ vars.NVD_MAX_RETRY_COUNT }}
           NVD_VALID_FOR_HOURS: ${{ vars.NVD_VALID_FOR_HOURS }}
           OWASP_AUTO_UPDATE: ${{ vars.OWASP_AUTO_UPDATE }}

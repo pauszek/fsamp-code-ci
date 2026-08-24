@@ -21,6 +21,17 @@ if grep -q -- '-Dgroups=fips' .github/workflows/build-java.yml; then
 fi
 grep -q 'python -m mypy src/' .github/workflows/build-python.yml
 
+java_workflow=.github/workflows/build-java.yml
+grep -Fq 'default_nvd_datafeed_url="https://dependency-check.github.io/DependencyCheck_Builder/nvd_cache/nvdcve-{0}.json.gz"' \
+    "${java_workflow}"
+grep -Fq "nvd_datafeed_args+=(\"-DnvdDatafeedUrl=\${nvd_datafeed_url}\")" \
+    "${java_workflow}"
+grep -Fq "NVD_DATAFEED_URL: \${{ vars.NVD_DATAFEED_URL }}" "${java_workflow}"
+grep -Fq "[[ \"\${nvd_datafeed_url}\" == https://*\"{0}\"* ]]" "${java_workflow}"
+grep -Fq "owasp_auto_update=\"\${OWASP_AUTO_UPDATE:-true}\"" "${java_workflow}"
+grep -Fq "[[ \"\${OWASP_CACHE_PRESENT}\" != \"true\" || -z \"\${NVD_API_KEY:-}\" ]]" \
+    "${java_workflow}"
+
 [[ "$(grep -Fc "client-id: \${{ vars.GABRBA_APPID }}" .github/workflows/build-java.yml)" -eq 3 ]]
 [[ "$(grep -Fc "client-id: \${{ vars.GABRBA_APPID }}" .github/workflows/build-python.yml)" -eq 3 ]]
 [[ "$(grep -Fc "app-id: \${{ vars.GABRBA_APPID }}" .github/workflows/build-java.yml)" -eq 1 ]]

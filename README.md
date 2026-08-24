@@ -49,6 +49,15 @@ passing runs do not spend Actions storage on transfer evidence. Private repos
 have no GitHub Advanced Security, so these run as first-class jobs rather than
 relying on the Security tab.
 
+Java scans restore the Dependency-Check data cache before updating it. A cold
+cache is bootstrapped from the [Dependency-Check project's HTTPS data feed][nvd-feed]
+instead of downloading the entire NVD catalog through the API. Warm-cache
+updates use the API when `NVD_API_KEY` is available and the data feed otherwise.
+Updates are enabled by default and respect `NVD_VALID_FOR_HOURS`; an internal
+mirror can be selected with `NVD_DATAFEED_URL`, whose value must contain `{0}`.
+
+[nvd-feed]: https://dependency-check.github.io/DependencyCheck/data/mirrornvd.html
+
 ## Supply chain
 
 - **Actions pinned by commit SHA** — external and in-repo composite actions
