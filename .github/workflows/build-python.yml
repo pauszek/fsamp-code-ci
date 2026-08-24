@@ -190,7 +190,9 @@ jobs:
 
       - name: Lint with Ruff
         run: |
-          pip install ruff
+          # The dev lockfile already pins these tools; only install when a
+          # consumer repository does not ship them.
+          command -v ruff >/dev/null || pip install ruff
           ruff check src/ tests/ --output-format=github
 
       - name: Type check with mypy
@@ -201,7 +203,8 @@ jobs:
 
       - name: Integration tests
         run: |
-          pip install 'testcontainers[localstack]'
+          python -c 'import testcontainers' 2>/dev/null \
+            || pip install 'testcontainers[localstack]'
           pytest -m integration -v --tb=short
         env:
           LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }}
@@ -244,7 +247,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pip install pip-audit
+          command -v pip-audit >/dev/null || pip install pip-audit
 
           audit_args=(--strict --desc)
           requirement_args=()
@@ -273,13 +276,13 @@ jobs:
 
       - name: Security static analysis (bandit)
         run: |
-          pip install bandit
+          command -v bandit >/dev/null || pip install bandit
           bandit -r src/ -f json -o bandit-report.json || true
           bandit -r src/ -ll
 
       - name: Generate SBOM (CycloneDX)
         run: |
-          pip install cyclonedx-bom
+          command -v cyclonedx-py >/dev/null || pip install cyclonedx-bom
           cyclonedx-py environment --output-format JSON --output-file bom.json
 
       - name: Upload coverage

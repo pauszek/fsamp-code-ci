@@ -72,8 +72,7 @@ mirror can be selected with `NVD_DATAFEED_URL`, whose value must contain `{0}`.
 ## Composite actions
 
 `docker-build` (multi-arch build + cosign + SBOM), `security-scan` (Trivy),
-`maven-build`, `publish`, `run-e2e`, `tag-and-release`,
-`bump-release-version`.
+`publish`, `run-e2e`, `tag-and-release`, `bump-release-version`.
 
 `run-e2e` uses a same-named branch from `fsamp-infra` or the counterpart
 service only while that branch has an open pull request to `main`. Stale
