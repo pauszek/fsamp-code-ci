@@ -737,7 +737,7 @@ jobs:
           fetch-depth: 0
 
       - name: Create tag and release
-        uses: pauszek/fsamp-code-ci/.github/actions/tag-and-release@8d6ea616a4c8082315c46fd81e02d69815625d01
+        uses: pauszek/fsamp-code-ci/.github/actions/tag-and-release@968325378f97ae805866f0db615967642c6432d6
         with:
           version-file: ${{ needs.params.outputs.files_version }}
           full_release: ${{ needs.params.outputs.release_full_release }}
